@@ -115,11 +115,9 @@ class Backup:
         except OSError:
             pass
         os.rename(tmppath, path)
-        if 'mode' in file_manifest:
-            os.chmod(path, file_manifest['mode'])
-        if 'mtime' in file_manifest:
-            os.utime(path, (int(file_manifest['mtime']),
-                            int(file_manifest['mtime'])))
+        os.chmod(path, file_manifest['mode'])
+        os.utime(path, (int(file_manifest['mtime']),
+                        int(file_manifest['mtime'])))
         self.status.verbose(file_manifest['n'])
 
     def get_chunklist(self, manifest):
@@ -191,6 +189,13 @@ class Backup:
                 pass
         for file_manifest in manifest['files']:
             self.restore_file(file_manifest)
+        for dir_manifest in reversed(manifest['dirs']): #permissions
+            dirname = dir_manifest['n']
+            dirpath = os.path.join(self.path, dirname)
+            os.chmod(dirpath, dir_manifest['mode'])
+            os.utime(dirpath, (int(dir_manifest['mtime']),
+                               int(dir_manifest['mtime'])))
+
         self.status.println('Done!')
 
     def snap_file(self, full_path, rel_path):

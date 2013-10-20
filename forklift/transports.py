@@ -16,6 +16,10 @@ class LocalTransport:
 
     def __init__(self, path, status):
         self.path = os.path.abspath(path)
+        try:
+            os.mkdir(self.path)
+        except OSError:
+            pass
         self.status = status
 
     def prepare_for_restore(self, chunks):
@@ -110,7 +114,10 @@ class S3Transport:
         if c is None:
             c = boto.connect_s3()
         self.c = c
-        self.b = c.get_bucket(bucket)
+        try:
+            self.b = c.get_bucket(bucket)
+        except boto.exception.S3ResponseError:
+            self.b = c.create_bucket(bucket)
 
     def prepare_for_restore(self, chunks):
         pass
@@ -185,7 +192,10 @@ class S3Transport:
 
 class S3GlacierTransport:
 
-    def __init__(self, bucket, vault, c = None, gc = None, status = None):
+    def __init__(self, bucket, vault = None, c = None, gc = None,
+                 status = None):
+        if vault is None:
+            vault = bucket
         self.retries = 40
         self.status = status
         if c is None:
@@ -195,8 +205,14 @@ class S3GlacierTransport:
         self.bucket = bucket
         self.vault = vault
         self.c = c
-        self.b = c.get_bucket(bucket)
-        self.v = gc.get_vault(vault)
+        try:
+            self.b = c.get_bucket(bucket)
+        except boto.exception.S3ResponseError:
+            self.b = c.create_bucket(bucket)
+        try:
+            self.v = gc.get_vault(vault)
+        except glacierexceptions.UnexpectedHTTPResponseError:
+            self.v = gc.create_vault(vault)
         self.gl1 = self.v.layer1
         self.gc = gc
         self.glacier_cache_dir = os.path.join(os.environ['HOME'],
