@@ -104,10 +104,10 @@ class Backup:
         bytes_d = self.status.bytes_d
         for chunk in file_manifest['b']:
             f.write(self.fetch_chunk(b64decode(chunk)))
-            self.status.chunks_d = self.status.chunks_d + 1
+            self.status.chunks_d += 1
             self.status.bytes_d = bytes_d + f.tell()
             self.status.update()
-        self.status.files_d = self.status.files_d + 1
+        self.status.files_d += 1
         self.status.update()
         f.close()
         try:
@@ -182,7 +182,7 @@ class Backup:
         for dir_manifest in manifest['dirs']:
             dirname = dir_manifest['n']
             dirpath = os.path.join(self.path, dirname)
-            self.status.dirs = self.status.dirs + 1
+            self.status.dirs += 1
             self.status.update()
             self.status.verbose(dirname)
             try:
@@ -209,12 +209,12 @@ class Backup:
             if chunkdata is not None:
                 self.transport.write_chunk(chunkhash, chunkdata)
             file_manifest['b'].append(b64encode(chunkhash))
-            self.status.chunks = self.status.chunks + 1
+            self.status.chunks += 1
             self.status.update()
         file_manifest['s'] = f.tell()
         self.status.bytes = self.status.bytes + f.tell()
         f.close()
-        self.status.files = self.status.files + 1
+        self.status.files += 1
         self.status.update()
 
         return file_manifest

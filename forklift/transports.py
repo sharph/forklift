@@ -38,16 +38,16 @@ class LocalTransport:
             pass
         f = open(chunkpath, 'wb')
         f.write(data)
-        self.status.t_bytes_u = self.status.t_bytes_u + f.tell()
-        self.status.t_chunks_u = self.status.t_chunks_u + 1
+        self.status.t_bytes_u += f.tell()
+        self.status.t_chunks_u += 1
         f.close()
 
     def read_chunk(self, chunkhash):
         chunkdir, chunkpath = self.get_path(chunkhash)
         f = open(chunkpath, 'rb')
         data = f.read()
-        self.status.t_bytes_d = self.status.t_bytes_d + f.tell()
-        self.status.t_chunks_d = self.status.t_chunks_d + 1
+        self.status.t_bytes_d += f.tell()
+        self.status.t_chunks_d += 1
         f.close()
         return data
 
@@ -125,16 +125,16 @@ class S3Transport:
         chunkhash = hexlify(chunkhash)
         k = self.b.new_key('data/' + chunkhash)
         k.set_contents_from_string(data)
-        self.status.t_chunks_u = self.status.t_chunks_u + 1
-        self.status.t_bytes_u = self.status.t_bytes_u + len(data)
+        self.status.t_chunks_u += 1
+        self.status.t_bytes_u += len(data)
 
     def read_chunk(self, chunkhash):
         chunkhash = hexlify(chunkhash)
         k = Key(self.b)
         k.key = 'data/' + chunkhash
         data = k.get_contents_as_string()
-        self.status.t_chunks_d = self.status.t_chunks_d + 1
-        self.status.t_bytes_d = self.status.t_bytes_d + len(data)
+        self.status.t_chunks_d += 1
+        self.status.t_bytes_d += len(data)
         return data
 
     def del_chunk(self, chunkhash):
@@ -156,13 +156,13 @@ class S3Transport:
         k = self.b.new_key(key)
         data = enc(json.dumps(manifest))
         k.set_contents_from_string(data)
-        self.status.t_bytes_u = self.status.t_bytes_u + len(data)
+        self.status.t_bytes_u += len(data)
 
     def read_manifest(self, mid, dec):
         k = Key(self.b)
         k.key = 'manifest.%s' % mid
         data = k.get_contents_as_string()
-        self.status.t_bytes_d = self.status.t_bytes_d + len(data)
+        self.status.t_bytes_d += len(data)
         return json.loads(dec(data))
 
     def del_manifest(self, mid):
@@ -251,7 +251,7 @@ class S3GlacierTransport:
         job_list = json.loads(self.gl1.list_jobs(self.vault).read())
         jobs = job_list['JobList']
         while 'Marker' in job_list and job_list['Marker'] is not None:
-            counter = counter + 1
+            counter += 1
             self.status.wait('Listing glacier jobs (%d)' % (counter,))
             job_list = json.loads(self.gl1.list_jobs(self.vault,
                                                      marker=job_list['Marker']
@@ -346,20 +346,20 @@ class S3GlacierTransport:
                 writer.close()
                 chunkwritten = True
             except glacierexceptions.UnexpectedHTTPResponseError as err:
-                tries = tries + 1
+                tries += 1
                 if tries > self.retries:
                     raise ChunkWriteError
                 self.status.wait('%s waiting %d seconds' %
                                  (err.message, backoff))
                 sleep(backoff)
                 self.status.unwait()
-                backoff = backoff * 2
+                backoff *= 2
                 if backoff > 240:
                     backoff = 240
         self.glacier_cache[chunkhash] = writer.get_archive_id()
         self.save_archive_ids()
-        self.status.t_chunks_u = self.status.t_chunks_u + 1
-        self.status.t_bytes_u = self.status.t_bytes_u + len(data)
+        self.status.t_chunks_u += 1
+        self.status.t_bytes_u += len(data)
 
     def read_chunk(self, chunkhash):
         chunkhash = b64encode(chunkhash)
@@ -379,18 +379,18 @@ class S3GlacierTransport:
                                                ready_job['JobId']).read()
                 chunkread = True
             except glacierexceptions.UnexpectedHTTPResponseError as err:
-                tries = tries + 1
+                tries += 1
                 if tries > self.retries:
                     raise ChunkReadError
                 self.status.wait('%s waiting %d seconds' %
                                  (err.message, backoff))
                 sleep(backoff)
                 self.status.unwait()
-                backoff = backoff * 2
+                backoff *= 2
                 if backoff > 240:
                     backoff = 240
-        self.status.t_chunks_d = self.status.t_chunks_d + 1
-        self.status.t_bytes_d = self.status.t_bytes_d + len(data)
+        self.status.t_chunks_d += 1
+        self.status.t_bytes_d += len(data)
         return data
 
     def write_manifest(self, manifest, enc):
@@ -398,7 +398,7 @@ class S3GlacierTransport:
         k = self.b.new_key(key)
         data = enc(json.dumps(manifest))
         k.set_contents_from_string(data)
-        self.status.t_bytes_u = self.status.t_bytes_u + len(data)
+        self.status.t_bytes_u += len(data)
 
     def read_manifest(self, mid, dec):
         self.status.wait('Reading manifest %d' % (mid, ))
@@ -406,7 +406,7 @@ class S3GlacierTransport:
         k.key = 'manifest.%s' % mid
         data = k.get_contents_as_string()
         self.status.unwait()
-        self.status.t_bytes_d = self.status.t_bytes_d + len(data)
+        self.status.t_bytes_d += len(data)
         return json.loads(dec(data))
 
     def list_manifest_ids(self):

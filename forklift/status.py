@@ -33,11 +33,11 @@ class NullStatus:
         self.dl_stats.append((t, self.t_bytes_d))
         self.ul_stats.append((t, self.t_bytes_u))
         if t - self.dl_stats[self.dl_5s_i][0] > 5:
-        #    self.dl_5s_i = self.dl_5s_i + 1
-            self.dl_stats.pop(0)
+            self.dl_5s_i += 1
+        #    self.dl_stats.pop(0)
         if t - self.ul_stats[self.ul_5s_i][0] > 5:
-            self.ul_stats.pop(0)
-        #    self.ul_5s_i = self.ul_5s_i + 1
+            self.ul_5s_i += 1
+        #    self.ul_stats.pop(0)
 
     def update(self):
         self.update_speed()
@@ -103,7 +103,7 @@ class ConsoleStatus(NullStatus):
                 percentbar = ' ' * 10
             else:
                 percentbar = percentbar[-(percent*10/100):]
-                percentbar = percentbar + (' ' * (10-len(percentbar)))
+                percentbar += ' ' * (10-len(percentbar))
             sys.stdout.write('[' + percentbar + '] ')
             sys.stdout.write('%.2f/%.2fMB %d/%d files ' %
                              (self.bytes_d / 1024.00 / 1024.00,
