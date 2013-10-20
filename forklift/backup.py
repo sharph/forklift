@@ -284,7 +284,11 @@ class Backup:
                                           self.crypto.encrypt_manifest)
  
 def main():
-    status = ConsoleStatus()
+    if sys.stdout.isatty():
+        status = ConsoleStatus()
+    else:
+        status = LogStatus()
+    
     parser = ArgumentParser('a backup application featuring encryption, '
                             'de-duplication, and multiple backends')
     parser.add_argument('path',
@@ -387,7 +391,9 @@ def main():
         if args.passphrase is not None:
             passphrase = args.passphrase
         else:
-            print('\r' + (' ' * 78) + '\r')
+            if isinstance(status, ConsoleStatus):
+                sys.stdout.write('\r' + (' ' * 78) + '\r')
+                sys.stdout.flush()
             passphrase = getpass('Passphrase: ')
         e = AES256Encryption(passphrase)
         del passphrase

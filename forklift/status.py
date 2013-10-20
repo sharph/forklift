@@ -60,8 +60,6 @@ class NullStatus:
     def end(self):
         pass
 
-class ConsoleStatus(NullStatus):
-
     def speed_str(self, bytesnow, bytesthen, timethen):
         try:
             return '%.0f KB/s' % \
@@ -77,6 +75,11 @@ class ConsoleStatus(NullStatus):
     def down_speed_str(self):
         (t, b) = self.dl_stats[self.index5s]
         return self.speed_str(self.t_bytes_d, b, t)
+
+class LogStatus(NullStatus):
+    pass
+
+class ConsoleStatus(NullStatus):
 
     def update(self):
         if self.mode == self.BACKING_UP:
