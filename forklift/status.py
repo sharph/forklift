@@ -25,18 +25,15 @@ class NullStatus:
 
         self.dl_stats = [(time(),0)] # (time(), t_bytes_d)
         self.ul_stats = [(time(),0)]
-        self.dl_5s_i = 0 # index which points to 5 secs ago in stats
-        self.ul_5s_i = 0
+        self.index5s = 0 # index which points to 5 secs ago in stats
 
     def update_speed(self):
         t = time()
         self.dl_stats.append((t, self.t_bytes_d))
         self.ul_stats.append((t, self.t_bytes_u))
-        if t - self.dl_stats[self.dl_5s_i][0] > 5:
-            self.dl_5s_i += 1
-        #    self.dl_stats.pop(0)
-        if t - self.ul_stats[self.ul_5s_i][0] > 5:
-            self.ul_5s_i += 1
+        while t - self.dl_stats[self.index5s][0] > 5 \
+            and len(self.dl_stats) - self.index5s > 2:
+            self.index5s += 1
         #    self.ul_stats.pop(0)
 
     def update(self):
@@ -65,14 +62,21 @@ class NullStatus:
 
 class ConsoleStatus(NullStatus):
 
-    def up_speed_str(self):
+    def speed_str(self, bytesnow, bytesthen, timethen):
         try:
-            (t, b) = self.ul_stats[self.ul_5s_i]
             return '%.0f KB/s' % \
-                   ((self.t_bytes_u - b) / 1024.00 /
-                    (time() - t), )
+                   ((bytesnow - bytesthen) / 1024.00 /
+                    (time() - timethen), )
         except ZeroDivisionError:
             return 'inf KB/s'
+
+    def up_speed_str(self):
+        (t, b) = self.ul_stats[self.index5s]
+        return self.speed_str(self.t_bytes_u, b, t)
+
+    def down_speed_str(self):
+        (t, b) = self.dl_stats[self.index5s]
+        return self.speed_str(self.t_bytes_d, b, t)
 
     def update(self):
         if self.mode == self.BACKING_UP:
@@ -110,10 +114,10 @@ class ConsoleStatus(NullStatus):
                               self.bytes / 1024.00 / 1024.00,
                               self.files_d,
                               self.files))
-            sys.stdout.write('(%s %d MB, %d chunks)' %
+            sys.stdout.write('(%s %d MB, %s)' %
                              (spinner,
                               self.t_bytes_d / 1024.00 / 1024.00,
-                              self.t_chunks_d))
+                              self.down_speed_str()))
 
             sys.stdout.write('\r')
             sys.stdout.flush()
