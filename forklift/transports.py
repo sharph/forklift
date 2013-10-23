@@ -236,6 +236,9 @@ class S3GlacierTransport:
                                                   job_data=job_data))
 
     def prepare_for_restore(self, chunks):
+        self.status.println('not safe to restore from glacier yet...')
+        self.status.end()
+        exit(1)
         self.status.wait('Creating glacier jobs...')
         for chunkhash in chunks:
             chunkhex = hexlify(chunkhash)[:8] + "..."
