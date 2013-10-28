@@ -257,7 +257,7 @@ class S3GlacierTransport:
                     'Description': '',
                     'Type': 'archive-retrieval'}
         job = self.gl1.initiate_job(self.vault, job_data=job_data)
-        self.jobs[aid] = job
+        self.jobs[aid] = self.describe_job(job['JobId'])
 
     def prepare_for_restore(self, chunks):
         self.chunk_queue = chunks[:]
