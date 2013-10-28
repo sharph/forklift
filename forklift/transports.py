@@ -269,6 +269,7 @@ class S3GlacierTransport:
         while job['StatusCode'] == 'InProgress':
             self.status.wait('Waiting for glacier job')
             sleep(60 * 5) # 5 minutes
+            self.add_more_jobs()
             job = self.describe_job(job['JobId'])
         if job['StatusCode'] != 'Succeeded':
             raise Exception('Job failed!')
