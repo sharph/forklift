@@ -42,6 +42,7 @@ class NullStatus:
     def wait(self, text):
         if self.mode != self.WAITING:
             self.oldmode = self.mode
+        self.mode = self.WAITING
         self.text = text
         self.update()
 
@@ -52,10 +53,10 @@ class NullStatus:
 
     def verbose(self, text):
         if self.printverbose:
-            self.println(str(text))
+            self.println(unicode(text))
 
     def println(self, text):
-        print(str(text))
+        print(unicode(text))
 
     def end(self):
         pass
@@ -105,7 +106,7 @@ class ConsoleStatus(NullStatus):
                 percent = int(self.bytes_d * 100 / self.bytes)
                 if percent > 100:
                     percent = 100
-                percentbar = percentbar + str(percent)
+                percentbar = percentbar + unicode(percent)
             if int(percent*10/100) == 0:
                 percentbar = ' ' * 10
             else:
@@ -136,6 +137,6 @@ class ConsoleStatus(NullStatus):
         sys.stdout.flush()
 
     def println(self, text):
-        print((' ' * 78) + '\r' + str(text))
+        print((' ' * 78) + '\r' + unicode(text))
         self.update()
     

@@ -193,7 +193,7 @@ class S3Transport:
 class S3GlacierTransport:
 
     def __init__(self, bucket, vault = None, c = None, gc = None,
-                 status = None):
+                 status = None, retrieve_bph = 1491308088):
         if vault is None:
             vault = bucket
         self.retries = 40
@@ -226,37 +226,48 @@ class S3GlacierTransport:
             pass
         self.load_archive_ids()
         self.get_jobs()
+        self.chunk_queue = []
+        self.last_job_creation = 0
+        self.bph = retrieve_bph
+
+    def add_more_jobs(self):
+        t = time()
+        if t - self.last_job_creation < 60 * 60:
+            return
+        self.last_job_creation = t
+        bth = 0
+        while self.chunk_queue != [] and bth < self.bph:
+            chunk, size = self.chunk_queue.pop(0)
+            chunkhex = hexlify(chunk)[:8]
+            chunkhash = b64encode(chunk)
+            if chunkhash not in self.glacier_cache:
+                raise Exception('chunk not in glacier cache')
+            aid = self.glacier_cache[chunkhash]
+            if aid not in self.jobs or \
+                    self.jobs[aid]['StatusCode'] == 'Failed':
+                self.status.wait('Creating job for %s...' % (chunkhex,))
+                self.status.verbose('Retrieving %s...' % (chunkhex,))
+                self.add_job(aid)
+                bth += size
+        self.status.unwait()
+        
 
     def add_job(self, aid):
         job_data = {'ArchiveId': aid,
                     'Description': '',
                     'Type': 'archive-retrieval'}
-        self.job[aid] = self.describe_job(
-                            self.gl1.initiate_job(self.vault,
-                                                  job_data=job_data))
+        job = self.gl1.initiate_job(self.vault, job_data=job_data)
+        self.jobs[aid] = job
 
     def prepare_for_restore(self, chunks):
-        self.status.println('not safe to restore from glacier yet...')
-        self.status.end()
-        exit(1)
-        self.status.wait('Creating glacier jobs...')
-        for chunkhash in chunks:
-            chunkhex = hexlify(chunkhash)[:8] + "..."
-            chunkhash = b64encode(chunkhash)
-            if chunkhash not in self.glacier_cache:
-                raise Exception('chunk not in glacier cache')
-            aid = self.glacier_cache[chunkhash]
-            if aid not in self.jobs:
-                self.status.wait('Creating glacier job for %s' %
-                                 (chunkhex, ))
-                self.add_job(aid)
-        self.status.unwait()
+        self.chunk_queue = chunks[:]
+        self.add_more_jobs()
 
     def wait_on_job(self, job):
-        self.status.wait('Waiting for glacier job')
+        self.add_more_jobs()
         job = self.describe_job(job['JobId'])
         while job['StatusCode'] == 'InProgress':
-            self.status.update()
+            self.status.wait('Waiting for glacier job')
             sleep(60 * 5) # 5 minutes
             job = self.describe_job(job['JobId'])
         if job['StatusCode'] != 'Succeeded':
@@ -385,8 +396,8 @@ class S3GlacierTransport:
         if chunkhash not in self.glacier_cache:
             raise Exception('chunk not in glacier cache!')
         aid = self.glacier_cache[chunkhash]
-        if aid not in self.jobs:
-            self.jobs[aid] = self.add_job(self.glacier_cache[chunkhash])
+        if aid not in self.jobs or self.jobs[aid]['StatusCode'] == 'Failed':
+            self.chunk_queue.insert(0, (b64decode(chunkhash), 16 * 1024 * 1024))
         ready_job = self.wait_on_job(self.jobs[aid])
 
         chunkread = False

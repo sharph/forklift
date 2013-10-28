@@ -34,6 +34,7 @@ class Backup:
         self.path = os.path.abspath(path)
         self.status = status
         self.blockmap = {}
+        self.inittime = time()
 
     def digest(self, data):
         '''Return a binary digest of the digestsecret (to preserve
@@ -65,20 +66,24 @@ class Backup:
         del encdata
         del digest
 
-    def fetch_chunk(self, chunkhash):
+    def fetch_chunk(self, chunkhash, verifyonly = False):
         '''Fetches a chunk of the given hash value. First it looks in
         local storage.'''
         if chunkhash in self.blockmap:
             for pos, path in self.blockmap[chunkhash]:
-                try:
-                    f = open(path, 'r')
-                    f.seek(pos)
-                    data = f.read(self.chunksize)
-                    if self.digest(data) == chunkhash:
-                        f.close()
-                        return data
-                except IOError:
-                    pass
+                for pathtotry in [path, path + '.' + str(self.inittime)]:
+                    try:
+                        f = open(pathtotry, 'r')
+                        f.seek(pos)
+                        data = f.read(self.chunksize)
+                        if self.digest(data) == chunkhash:
+                            f.close()
+                            return data
+                    except IOError:
+                        pass
+
+        if verifyonly:
+            return None
         
         data = self.transport.read_chunk(chunkhash)
         self.status.update()
@@ -99,7 +104,7 @@ class Backup:
          'mtime': modified time}'''
         
         path = os.path.join(self.path, file_manifest['n'])
-        tmppath = path + '-' + str(int(time()))
+        tmppath = path + '.' + str(self.inittime)
         f = open(tmppath, 'wb')
         bytes_d = self.status.bytes_d
         for chunk in file_manifest['b']:
@@ -107,6 +112,7 @@ class Backup:
             self.status.chunks_d += 1
             self.status.bytes_d = bytes_d + f.tell()
             self.status.update()
+            f.flush()
         self.status.files_d += 1
         self.status.update()
         f.close()
@@ -120,17 +126,25 @@ class Backup:
                         int(file_manifest['mtime'])))
         self.status.verbose(file_manifest['n'])
 
-    def get_chunklist(self, manifest):
-        '''Fetches a full list of needed chunk digests from a manifest.'''
+    def get_chunklist(self, manifest, return_sizes = False):
+        '''Fetches a full list of chunk digests from a manifest.'''
 
         chunklist = []
+        chunklist_sizes = []
         if 'files' not in manifest:
             return chunklist
         for file_manifest in manifest['files']:
-            for chunk in file_manifest['b']:
+            for count, chunk in enumerate(file_manifest['b']):
                 chunk = b64decode(chunk)
                 if chunk not in chunklist:
                     chunklist.append(chunk)
+                    if (count + 1) * self.chunksize > file_manifest['s']:
+                        chunklist_sizes.append(file_manifest['s'] %
+                                               self.chunksize)
+                    else:
+                        chunklist_sizes.append(self.chunksize)
+        if return_sizes:
+            return zip(chunklist, chunklist_sizes)
         return chunklist
 
     def retention(self, t):
@@ -154,6 +168,9 @@ class Backup:
                 self.transport.del_chunk(chunk)
         
     def build_block_map(self, manifest):
+        '''Builds a dict (as part of the object) which contains each chunkhash
+           and where it can potientially be found in the filesystem.'''
+
         for f in manifest['files']:
             for pos, chunk in enumerate(f['b']):
                 chunk = b64decode(chunk)
@@ -161,6 +178,17 @@ class Backup:
                     self.blockmap[chunk] = []
                 p = os.path.join(self.path, f['n'])
                 self.blockmap[chunk].append((pos * self.chunksize, p))
+
+    def find_needed_chunks(self, chunklist):
+        '''Returns a list of chunks not on the local filesystem. Chunklist
+           should be a list of tuples with the chunkhash and the chunksize.'''
+        
+        needed_chunks = []
+        for chunk in chunklist:
+            if self.fetch_chunk(chunk[0], verifyonly = True) is None:
+                needed_chunks.append(chunk)
+        return needed_chunks
+
 
     def restore_tree(self, mid = None):
         '''Restores the entire file tree for a given manifest id.'''
@@ -175,8 +203,10 @@ class Backup:
         self.status.bytes = reduce(lambda x,y: x+y['s'],
                                    manifest['files'],
                                    0)
-        self.transport.prepare_for_restore(self.get_chunklist(manifest))
         self.build_block_map(manifest)
+        self.transport.prepare_for_restore(
+            self.find_needed_chunks(self.get_chunklist(manifest,
+                                                       return_sizes = True)))
         for dir_manifest in manifest['dirs']:
             dirname = dir_manifest['n']
             dirpath = os.path.join(self.path, dirname)
@@ -316,6 +346,7 @@ def main():
                         default=False,
                         help='show extra information while running')
 
+
     parser.add_argument('--local-backend',
                         action='store',
                         nargs=1,
@@ -333,6 +364,16 @@ def main():
                         metavar=('BUCKETNAME','VAULTNAME'),
                         help='use Amazon Glacer to store the vault data and '
                         'use Amazon S3 to store manifests (vault metadata)')
+    parser.add_argument('--glacier-retrieve-gph', '-gph',
+                        action='store',
+                        nargs=1,
+                        default=1.38,
+                        type=float,
+                        metavar='GB',
+                        help='gigabytes per hour to retrieve from Glacier. '
+                             'Multiply by 7.2 for approximate retrieval fees '
+                             'in USD. (default: 1.38)')
+
 
     parser.add_argument('--encryption',
                         action='store',
@@ -365,9 +406,10 @@ def main():
         t = S3Transport(args.s3_backend[0], status=status)
     elif args.s3_glacier_backend is not None:
         status.verbose('Using S3/Glacier backend.')
+        bph = int(args.glacier_retrieve_gph[0] * 1024 * 1024 * 1024)
         t = S3GlacierTransport(args.s3_glacier_backend[0],
                                args.s3_glacier_backend[1],
-                               status=status)
+                               status=status, retrieve_bph = bph)
     else:
         status.println('No backend selected!')
         status.end()
