@@ -34,7 +34,7 @@ class Backup:
         self.path = os.path.abspath(path)
         self.status = status
         self.blockmap = {}
-        self.inittime = time()
+        self.inittime = int(time())
 
     def digest(self, data):
         '''Return a binary digest of the digestsecret (to preserve
@@ -105,22 +105,28 @@ class Backup:
         
         path = os.path.join(self.path, file_manifest['n'])
         tmppath = path + '.' + str(self.inittime)
-        f = open(tmppath, 'wb')
-        bytes_d = self.status.bytes_d
-        for chunk in file_manifest['b']:
-            f.write(self.fetch_chunk(b64decode(chunk)))
-            self.status.chunks_d += 1
-            self.status.bytes_d = bytes_d + f.tell()
-            self.status.update()
-            f.flush()
-        self.status.files_d += 1
-        self.status.update()
-        f.close()
         try:
-            os.unlink(path)
-        except OSError:
-            pass
-        os.rename(tmppath, path)
+            f = open(tmppath, 'wb')
+            bytes_d = self.status.bytes_d
+            for chunk in file_manifest['b']:
+                f.write(self.fetch_chunk(b64decode(chunk)))
+                self.status.chunks_d += 1
+                self.status.bytes_d = bytes_d + f.tell()
+                self.status.update()
+                f.flush()
+            self.status.files_d += 1
+            self.status.update()
+            f.close()
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            os.rename(tmppath, path)
+        except Exception as e:
+            self.status.verbose('Cleaning up temporary file!')
+            f.close()
+            os.unlink(tmppath)
+            raise e
         os.chmod(path, file_manifest['mode'])
         os.utime(path, (int(file_manifest['mtime']),
                         int(file_manifest['mtime'])))

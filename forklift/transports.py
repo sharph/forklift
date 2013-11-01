@@ -7,6 +7,8 @@ from time import time, sleep
 from binascii import hexlify, unhexlify
 from base64 import b64encode, b64decode
 
+from httplib import IncompleteRead
+
 from boto.s3.connection import S3Connection
 from boto.s3.key import Key
 import boto.glacier.exceptions as glacierexceptions
@@ -292,8 +294,14 @@ class S3GlacierTransport:
         return jobs
 
     def describe_job(self, jobid):
-        return json.loads(self.gl1.describe_job(self.vault,
-                                                jobid).read())
+        while True:
+            try:
+                return json.loads(self.gl1.describe_job(self.vault,
+                                                        jobid).read())
+            except socket.gaierror:
+                sleep(60)
+                continue
+
 
     def get_jobs(self):
         self.inv_retrieval_job = None
@@ -367,10 +375,9 @@ class S3GlacierTransport:
 
     def write_chunk(self, chunkhash, data):
         chunkhash = b64encode(chunkhash)
-        chunkwritten = False
         backoff = 2
         tries = 0
-        while not chunkwritten:
+        while True:
             try:
                 writer = self.v.create_archive_writer(description=chunkhash)
                 writer.write(data)
@@ -387,6 +394,12 @@ class S3GlacierTransport:
                 backoff *= 2
                 if backoff > 240:
                     backoff = 240
+            except socket.gaierror:
+                self.status.wait('Network issues... waiting...')
+                sleep(60)
+                self.status.unwait()
+                continue
+            break
         self.glacier_cache[chunkhash] = writer.get_archive_id()
         self.save_archive_ids()
         self.status.t_chunks_u += 1
@@ -401,14 +414,12 @@ class S3GlacierTransport:
             self.chunk_queue.insert(0, (b64decode(chunkhash), 16 * 1024 * 1024))
         ready_job = self.wait_on_job(self.jobs[aid])
 
-        chunkread = False
         backoff = 2
         tries = 0
-        while not chunkread:
+        while True:
             try:
                 data = self.gl1.get_job_output(self.vault,
                                                ready_job['JobId']).read()
-                chunkread = True
             except glacierexceptions.UnexpectedHTTPResponseError as err:
                 tries += 1
                 if tries > self.retries:
@@ -420,6 +431,13 @@ class S3GlacierTransport:
                 backoff *= 2
                 if backoff > 240:
                     backoff = 240
+                continue
+            except socket.gaierror:
+                self.status.wait('Network issues... waiting...')
+                sleep(60)
+                self.status.unwait()
+                continue
+            break
         self.status.t_chunks_d += 1
         self.status.t_bytes_d += len(data)
         return data
