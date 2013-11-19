@@ -2,6 +2,7 @@
 import os
 import os.path
 import sys
+import socket
 import json
 from time import time, sleep
 from binascii import hexlify, unhexlify

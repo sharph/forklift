@@ -126,7 +126,12 @@ class Backup:
             self.status.verbose('Cleaning up temporary file!')
             f.close()
             os.unlink(tmppath)
-            raise e
+            raise
+        except KeyboardInterrupt:
+            self.status.verbose('Cleaning up temporary file!')
+            f.close()
+            os.unlink(tmppath)
+            raise
         os.chmod(path, file_manifest['mode'])
         os.utime(path, (int(file_manifest['mtime']),
                         int(file_manifest['mtime'])))
@@ -373,7 +378,7 @@ def main():
     parser.add_argument('--glacier-retrieve-gph', '-gph',
                         action='store',
                         nargs=1,
-                        default=1.38,
+                        default=[1.38],
                         type=float,
                         metavar='GB',
                         help='gigabytes per hour to retrieve from Glacier. '
