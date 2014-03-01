@@ -21,7 +21,7 @@ class NullEncryption:
     def encrypt_manifest(self, plaintext):
         return plaintext
 
-    def decrypt_menifest(self, ciphertext):
+    def decrypt_manifest(self, ciphertext):
         return ciphertext
 
 class AES256Encryption:
