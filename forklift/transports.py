@@ -395,6 +395,7 @@ class S3GlacierTransport:
                 backoff *= 2
                 if backoff > 240:
                     backoff = 240
+                continue
             except socket.gaierror:
                 self.status.wait('Network issues... waiting...')
                 sleep(60)
