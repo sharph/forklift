@@ -255,7 +255,7 @@ class Backup:
                file_manifest['mtime'] == self.oldfiles[rel_path]['mtime']:
             file_manifest['b'] = self.oldfiles[rel_path]['b']
             file_manifest['s'] = self.oldfiles[rel_path]['s']
-            self.status.chunks = len(file_manifest['b'])
+            self.status.chunks += len(file_manifest['b'])
             self.status.files += 1
             self.status.bytes += file_manifest['s']
             self.status.update()
