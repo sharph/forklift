@@ -31,8 +31,12 @@ class AES256Encryption:
         self.ready = False
         self.hmac_size = SHA256.SHA256Hash.digest_size
 
+    def check_hmac(self, msg, hmac):
+        return HMAC.new(self.hmac_key, msg, SHA256).digest() == hmac or \
+               HMAC.new(self.key, msg, SHA256).digest() == hmac
+
     def hmac(self, msg):
-        return HMAC.new(self.key, msg, SHA256).digest()
+        return HMAC.new(self.hmac_key, msg, SHA256).digest()
         
     def set_key(self, salt = None):
         if salt is None:
@@ -40,7 +44,9 @@ class AES256Encryption:
                 salt = Random.new().read(8) # 64-bit salt
             else:
                 salt = self.salt
-        self.key = PBKDF2(self.passphrase, salt).read(32)
+        pbkdf2 = PBKDF2(self.passphrase, salt)
+        self.key = pbkdf2.read(32)
+        self.hmac_key = pbkdf2.read(32)
         del self.passphrase
         self.ready = True
         self.salt = salt
@@ -83,7 +89,7 @@ class AES256Encryption:
         if not self.ready:
             self.set_key(salt)
         hmac, msg = ciphertext[:self.hmac_size], ciphertext[self.hmac_size:]
-        if hmac != self.hmac(msg):
+        if not self.check_hmac(msg, hmac):
             raise EncryptionError
         return self.decrypt(msg)
         

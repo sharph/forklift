@@ -35,6 +35,7 @@ class Backup:
         self.status = status
         self.blockmap = {}
         self.inittime = int(time())
+        self.oldfiles = {}
 
     def digest(self, data):
         '''Return a binary digest of the digestsecret (to preserve
@@ -250,6 +251,16 @@ class Backup:
                          'mode': s.st_mode,
                          'mtime': int(s.st_mtime),
                          'b': []}
+        if rel_path in self.oldfiles and \
+               file_manifest['mtime'] == self.oldfiles[rel_path]['mtime']:
+            file_manifest['b'] = self.oldfiles[rel_path]['b']
+            file_manifest['s'] = self.oldfiles[rel_path]['s']
+            self.status.chunks = len(file_manifest['b'])
+            self.status.files += 1
+            self.status.bytes += file_manifest['s']
+            self.status.update()
+            return file_manifest
+
         f = open(full_path,'rb')
         for chunkhash, chunkdata in self.get_chunks(f):
             if chunkdata is not None:
@@ -258,7 +269,7 @@ class Backup:
             self.status.chunks += 1
             self.status.update()
         file_manifest['s'] = f.tell()
-        self.status.bytes = self.status.bytes + f.tell()
+        self.status.bytes += f.tell()
         f.close()
         self.status.files += 1
         self.status.update()
@@ -309,6 +320,8 @@ class Backup:
         if len(mids) > 0:
             manifest = self.transport.read_manifest(mids[-1],
                                           self.crypto.decrypt_manifest)
+            self.oldfiles = dict(map(lambda x: (x['n'], x),
+                                     manifest['files']))
             self.digestsecret = b64decode(manifest['digestsecret'])
             try:
                 self.chunksize = manifest['chunksize']

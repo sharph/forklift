@@ -134,7 +134,18 @@ class ConsoleStatus(NullStatus):
     def end(self):
         sys.stdout.write(' ' * 78)
         sys.stdout.write('\r')
+        sys.stdout.write('Summary:\n')
+        sys.stdout.write('--------\n')
+        sys.stdout.write('Total MB uploaded this session:    %.2f\n'
+                         'Total MB downloaded this session:  %.2f\n'
+                         'Total files:                       %d\n'
+                         'Total size in MB:                  %.2f\n' %
+                         (self.t_bytes_u / 1024.00 / 1024.00,
+                          self.t_bytes_d / 1024.00 / 1024.00,
+                          self.files,
+                          self.bytes / 1024.00 / 1024.00))
         sys.stdout.flush()
+
 
     def println(self, text):
         print((' ' * 78) + '\r' + unicode(text))
