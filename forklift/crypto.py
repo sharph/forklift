@@ -4,6 +4,7 @@ from pbkdf2 import PBKDF2
 from Crypto.Cipher import AES
 from Crypto.Hash import HMAC, SHA256
 from Crypto import Random
+import bz2
 from struct import pack, unpack, calcsize
 
 from flexceptions import EncryptionError
@@ -17,14 +18,23 @@ class NullEncryption:
 
     def decrypt(self, ciphertext):
         return ciphertext
+    
+    def decompress(self, data):
+        try:
+            return bz2.decompress(data)
+        except IOError:
+            return data
+
+    def compress(self,data):
+        return bz2.compress(data)
 
     def encrypt_manifest(self, plaintext):
-        return plaintext
+        return self.compress(plaintext)
 
     def decrypt_manifest(self, ciphertext):
-        return ciphertext
+        return self.decompress(ciphertext)
 
-class AES256Encryption:
+class AES256Encryption(NullEncryption):
     def __init__(self, passphrase):
         self.passphrase = passphrase
         self.salt = None
@@ -80,7 +90,7 @@ class AES256Encryption:
     def encrypt_manifest(self, plaintext):
         if not self.ready:
             self.set_key()
-        ciphertext = self.encrypt(plaintext)
+        ciphertext = self.encrypt(self.compress(plaintext))
         hmac = self.hmac(ciphertext)
         return self.salt + hmac + ciphertext
         
@@ -91,5 +101,5 @@ class AES256Encryption:
         hmac, msg = ciphertext[:self.hmac_size], ciphertext[self.hmac_size:]
         if not self.check_hmac(msg, hmac):
             raise EncryptionError
-        return self.decrypt(msg)
+        return self.decompress(self.decrypt(msg))
         
