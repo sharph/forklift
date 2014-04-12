@@ -15,6 +15,15 @@ from boto.s3.key import Key
 import boto.glacier.exceptions as glacierexceptions
 import boto
 
+
+def setup_transport(config, status):
+    '''Given a config, returns a transport object.'''
+
+    t_config = config['destination'][0]
+    if t_config['type'] == 'local':
+        return LocalTransport(t_config['path'], status)
+
+
 class LocalTransport:
 
     def __init__(self, path, status):

@@ -22,6 +22,7 @@ class NullStatus:
         self.chunks = 0
         self.printverbose = False
         self.text = 'WAITING'
+        self.fn = ''
 
         self.dl_stats = [(time(),0)] # (time(), t_bytes_d)
         self.ul_stats = [(time(),0)]
@@ -51,6 +52,9 @@ class NullStatus:
         self.text = 'WAITING'
         self.update()
 
+    def filename(self, fn):
+        self.fn = fn
+
     def verbose(self, text):
         if self.printverbose:
             self.println(unicode(text))
@@ -59,6 +63,9 @@ class NullStatus:
         print(unicode(text))
 
     def end(self):
+        pass
+
+    def complete_operation(self):
         pass
 
     def speed_str(self, bytesnow, bytesthen, timethen):

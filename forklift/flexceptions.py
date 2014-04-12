@@ -3,6 +3,9 @@
 class EncryptionError(Exception):
     pass
 
+class CompressionError(Exception):
+    pass
+
 class BlockCorruptionError(Exception):
     pass
 
