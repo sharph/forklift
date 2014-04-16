@@ -12,6 +12,7 @@ import datetime
 from getpass import getpass
 
 import json
+import yaml
 import compression
 import crypto
 import transports
@@ -23,7 +24,9 @@ class Backup:
     path and an attached transport. A crypto object can also be attached.
     (If none is selected, we default to NullEncryption().'''
     
-    def __init__(self, config, status = None):
+    def __init__(self, config = None, status = None):
+        if config is None:
+            config = {}
         self.config = config
         if 'chunksize' not in config:
             self.config['chunksize'] = 1024 * 1024 * 8 # 8MB
@@ -33,36 +36,46 @@ class Backup:
         self.blockmap = {}
         self.inittime = int(time())
         self.oldfiles = {}
-        self.transport = transports.setup_transport(config, status)
+        self.transport = transports.MetaTransport(config, status)
+        self.root = '/'
 
-    def digest(self, data):
+    def _syspath_to_backup(self, path):
+        return os.path.relpath(path, self.root)
+
+    def _backup_to_syspath(self, path):
+        return os.path.join(self.root, path)
+
+    def _digest(self, data):
         return crypto.hmac(self.config, data)
     
-    def enc(self, data):
+    def _enc(self, data):
         return crypto.encrypt(self.config,
                               compression.compress(self.config, data))
 
-    def dec(self, data):
+    def _dec(self, data):
         return compression.decompress(self.config,
                                       crypto.decrypt(self.config, data))
 
-    def manifest_enc(self, data):
-        pass
+    def _save_manifest(self, data):
+        data = crypto.encrypt_then_mac(self.config,
+                   compression.compress(self.config, json.dumps(data)))
+        self.transport.write_manifest(data, self.inittime)
 
-    def manifest_dec(self, data):
+    def _load_manifest(self, mid):
+        data = self.transport.read_manifest(mid)
         return json.loads(compression.decompress(self.config,
                             crypto.auth_then_decrypt(self.config,data)))
 
-    def get_chunks(self, f):
+    def _get_chunks(self, f):
         '''Generator that takes a file handle and yields tuples consisting
         of a hash of the encrypted chunk of data as well as the
         encrypted chunk of data itself.'''
 
         data = f.read(self.config['chunksize'])
         while data != '':
-            digest = self.digest(data)
+            digest = self._digest(data)
             if not self.transport.chunk_exists(digest):
-                encdata = self.enc(data)
+                encdata = self._enc(data)
             else:
                 encdata = None
             yield (digest, encdata)
@@ -70,6 +83,42 @@ class Backup:
         del data
         del encdata
         del digest
+
+    def load_config_remote(self, passphrase):
+        config = self.transport.read_config()
+        config = crypto.decrypt_config(config, passphrase)
+        config = json.loads(config)
+        self.__init__(config, self.status)
+
+    def save_config_remote(self):
+        config = json.dumps(self.config)
+        config = crypto.encrypt_config(self.config, config)
+        self.transport.write_config(config)
+
+    def _local_config_path(self):
+        if 'local_config' in self.config:
+            return self.config['local_config']
+        return os.path.join(self.config['local_paths'][0],
+                            '.forklift_config')
+
+    def load_config_local(self, path = None):
+        if path is None:
+            path = self._local_config_path()
+        f = open(path, 'r')
+        config = json.load(f)
+        f.close()
+        self.__init__(config, self.status)
+    
+    def save_config_local(self, path = None):
+        if path is None:
+            path = self._local_config_path()
+        f = open(path, 'w')
+        f.write(json.dumps(self.config, indent=2))
+        f.close()   
+
+    def set_passphrase(self, passphrase):
+        crypto.new_passphrase(self.config, passphrase)
+        #self.save_config_local()
 
     def fetch_chunk(self, chunkhash, verifyonly = False):
         '''Fetches a chunk of the given hash value. First it looks in
@@ -81,7 +130,7 @@ class Backup:
                         f = open(pathtotry, 'r')
                         f.seek(pos)
                         data = f.read(self.config['chunksize'])
-                        if self.digest(data) == chunkhash:
+                        if self._digest(data) == chunkhash:
                             f.close()
                             return data
                     except IOError:
@@ -92,13 +141,13 @@ class Backup:
         
         data = self.transport.read_chunk(chunkhash)
         self.status.update()
-        data = self.dec(data)
-        if self.digest(data) != chunkhash:
+        data = self._dec(data)
+        if self._digest(data) != chunkhash:
             raise BlockCorruptionError('Block %s corrupted!' %
                                        hexlify(chunkhash))
         return data
 
-    def restore_file(self, file_manifest, dst):
+    def restore_file(self, file_manifest):
         '''Fetches and restores a file from a given manifest dict.
         
         Manifest format:
@@ -108,7 +157,7 @@ class Backup:
          'mode': os stat mode,
          'mtime': modified time}'''
         
-        path = os.path.join(dst, file_manifest['n'])
+        path = self._backup_to_syspath(file_manifest['n'])
         tmppath = path + '.' + str(self.inittime)
         try:
             f = open(tmppath, 'wb')
@@ -175,7 +224,7 @@ class Backup:
             self.transport.del_manifest(mid)
         chunks = []
         for mid in keep_mids:
-            manifest = self.transport.read_manifest(mid, self.manifest_dec)
+            manifest = self._load_manifest(mid)
             chunks = chunks + self.get_chunklist(manifest)
         existing_chunks = self.transport.list_chunks()
         keep_chunks = list(set(chunks))
@@ -207,7 +256,7 @@ class Backup:
         return needed_chunks
 
 
-    def restore_tree(self, dst, mid = None):
+    def restore_tree(self, mid = None):
         '''Restores the entire file tree for a given manifest id.'''
     
         self.status.mode = self.status.RESTORING
@@ -215,7 +264,7 @@ class Backup:
         if mid is None:
             manifest = self.get_last_manifest()
         else:
-            manifest = self.transport.read_manifest(mid, dec)
+            manifest = self._load_manifest(mid)
         self.status.files = len(manifest['files'])
         self.status.bytes = reduce(lambda x,y: x+y['s'],
                                    manifest['files'],
@@ -226,19 +275,19 @@ class Backup:
                                                        return_sizes = True)))
         for dir_manifest in manifest['dirs']:
             dirname = dir_manifest['n']
-            dirpath = os.path.join(dst, dirname)
+            dirpath = self._backup_to_syspath(dirname)
             self.status.dirs += 1
             self.status.update()
             self.status.verbose(dirname)
             try:
-                os.mkdir(dirpath)
-            except OSError:
+                os.makedirs(dirpath)
+            except os.error:
                 pass
         for file_manifest in manifest['files']:
-            self.restore_file(file_manifest, dst)
+            self.restore_file(file_manifest)
         for dir_manifest in reversed(manifest['dirs']): #permissions
             dirname = dir_manifest['n']
-            dirpath = os.path.join(self.config['local_paths'][0], dirname)
+            dirpath = self._backup_to_syspath(dirname)
             os.chmod(dirpath, dir_manifest['mode'])
             os.utime(dirpath, (int(dir_manifest['mtime']),
                                int(dir_manifest['mtime'])))
@@ -269,7 +318,7 @@ class Backup:
             return file_manifest
 
         f = open(full_path,'rb')
-        for chunkhash, chunkdata in self.get_chunks(f):
+        for chunkhash, chunkdata in self._get_chunks(f):
             if chunkdata is not None:
                 self.transport.write_chunk(chunkhash, chunkdata)
             file_manifest['b'].append(b64encode(chunkhash))
@@ -291,28 +340,24 @@ class Backup:
                     'dirs': [],
                     'files': []}
         self.m = manifest
-        for root, dirs, files in os.walk(self.config['local_paths'][0]):
-            rel_path = os.path.relpath(root, self.config['local_paths'][0])
-            s = os.stat(root)
-            dir_manifest = {'n': rel_path,
-                            'uid': s.st_uid,
-                            'gid': s.st_gid,
-                            'mode': s.st_mode,
-                            'mtime': int(s.st_mtime)}
-            manifest['dirs'].append(dir_manifest)
-            self.status.verbose(root)
-            for filename in files:
-                full_path = os.path.join(root, filename)
-                rel_path = os.path.relpath(full_path,
-                                           self.config['local_paths'][0])
-                manifest['files'].append(self.snap_file(full_path,
-                                                        rel_path))
-                self.status.verbose(full_path)
+        for path in self.config['local_paths']:
+            for root, dirs, files in os.walk(path):
+                s = os.stat(root)
+                dir_manifest = {'n': self._syspath_to_backup(root),
+                                'uid': s.st_uid,
+                                'gid': s.st_gid,
+                                'mode': s.st_mode,
+                                'mtime': int(s.st_mtime)}
+                manifest['dirs'].append(dir_manifest)
+                self.status.verbose(root)
+                for filename in files:
+                    full_path = os.path.join(root, filename)
+                    backup_path = self._syspath_to_backup(full_path)
+                    manifest['files'].append(self.snap_file(full_path,
+                                                            backup_path))
+                    self.status.verbose(full_path)
 
-        enc = lambda x: crypto.encrypt_then_mac(self.config,
-                            compression.compress(self.config, json.dumps(x)))
-        self.transport.write_manifest(manifest, enc)
-
+        self._save_manifest(manifest)
         self.status.complete_operation()
 
     def get_last_manifest(self):
@@ -322,22 +367,28 @@ class Backup:
             return
         mids = self.transport.list_manifest_ids()
         if len(mids) > 0:
-            manifest = self.transport.read_manifest(mids[-1], self.manifest_dec)
+            self.status.println( mids[0])
+            manifest = self._load_manifest(mids[-1])
             self.oldfiles = dict(map(lambda x: (x['n'], x),
                                      manifest['files']))
+            return manifest
         #else:
         #    self.status.println(
         #        'Could not find any manifest files. Initializing!')
         #    null_manifest = {'version': 1}
         #    self.transport.write_manifest(null_manifest,
         #                                  self.crypto.encrypt_manifest)
-        return manifest
  
 def main():
     status = ConsoleStatus()
-    
-    b = Backup(config, status)
+ 
+   
+    b = Backup(status=status)
+    b.load_config_local('config')
+#    b.set_passphrase('test')
+#    b.save_config_remote()
 #    b.snap_tree()
+    b.restore_tree()
     status.end()
     exit(0)
 

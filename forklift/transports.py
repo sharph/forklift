@@ -16,15 +16,104 @@ import boto.glacier.exceptions as glacierexceptions
 import boto
 
 
-def setup_transport(config, status):
-    '''Given a config, returns a transport object.'''
+class MetaTransport:
+    def __init__(self, config, status):
+        self.transports = []
+        if 'destination' not in config:
+            return
+        if 'redundancy' in config:
+            self.redundancy = config['redundancy']
+        else:
+            self.redundancy = 3 if len(config['destination']) >= 3 else \
+                                    len(config['destination'])
+        for t_config in config['destination']:
+            self.transports.append(self._setup_transport(t_config, status))
+        self.wtransports = self.transports[:]
 
-    t_config = config['destination'][0]
-    if t_config['type'] == 'local':
-        return LocalTransport(t_config['path'], status)
+    def _setup_transport(self, t_config, status):
+        '''Given a config, returns a transport object.'''
+    
+        if t_config['type'] == 'local':
+            return LocalTransport(t_config['path'], status)
+        elif t_config['type'] == 's3':
+            s3conn = boto.connect_s3(t_config['aws_access_key_id'],
+                                     t_config['aws_secret_access_key'])
+            return S3Transport(t_config['bucket'], s3conn, status)
+
+    def prepare_for_restore(self, chunks):
+        for t in self.transports:
+            t.prepare_for_restore(chunks)
+
+    def chunk_exists(self, chunk):
+        count = 0
+        for t in self.transports:
+            if t.chunk_exists(chunk):
+                count += 1
+                if count >= self.redundancy:
+                    return True
+        return False
+
+    def write_chunk(self, chunkhash, data):
+        wtransports = []
+        redundancy = self.redundancy
+        for t in self.wtransports:
+            if t.chunk_exists(chunkhash):
+                redundancy -= 1
+            else:
+                wtransports.append(t)
+        for n, t in enumerate(wtransports):
+            if n >= self.redundancy:
+                break
+            t.write_chunk(chunkhash, data)
+        self.wtransports.append(self.wtransports.pop(0))
+
+    def read_chunk(self, chunkhash):
+        for t in self.transports:
+            if t.chunk_exists(chunkhash):
+                return t.read_chunk(chunkhash)
+
+    def del_chunk(self, chunkhash):
+        for t in self.transports:
+            if t.chunk_exists(chunkhash):
+                t.del_chunk(chunkhash)
+
+    def list_chunks(self):
+        chunks = []
+        for t in self.transports:
+            chunks += t.list_chunks()
+        return list(set(chunks))
+
+    def write_manifest(self, manifest, mid):
+        for t in self.transports:
+            t.write_manifest(manifest, mid)
+
+    def read_manifest(self, mid):
+        return self.transports[0].read_manifest(mid)
+
+    def del_manifest(self, mid):
+        for t in self.transports:
+            t.del_manifest(mid)
+
+    def list_manifest_ids(self):
+        mids = []
+        for t in self.transports:
+            mids += t.list_manifest_ids()
+        return sorted(list(set(mids)))
 
 
-class LocalTransport:
+class Transport:
+    def prepare_for_restore(self, chunks):
+        for chunk in self.list_chunks():
+            try:
+                chunks.remove(chunk)
+            except ValueError:
+                pass
+
+    def refresh_cache(self):
+        pass
+        
+
+class LocalTransport(Transport):
 
     def __init__(self, path, status):
         self.path = os.path.abspath(path)
@@ -33,9 +122,6 @@ class LocalTransport:
         except OSError:
             pass
         self.status = status
-
-    def prepare_for_restore(self, chunks):
-        pass
 
     def get_path(self, chunkhash):
         chunkhash = hexlify(chunkhash)
@@ -83,20 +169,33 @@ class LocalTransport:
                     pass
         return chunks
     
-    def write_manifest(self, manifest, enc):
-        path = os.path.join(self.path, '%s.manifest' % int(time()) )
+    def write_manifest(self, manifest, mid):
+        path = os.path.join(self.path, '%s.manifest' % int(mid) )
         f = open(path, 'w')
-        f.write(enc(json.dumps(manifest)))
+        f.write(manifest)
         self.status.t_bytes_u = self.status.t_bytes_u + f.tell()
         f.close()
 
-    def read_manifest(self, mid, dec):
+    def read_manifest(self, mid):
         path = os.path.join(self.path, '%s.manifest' % mid )
         f = open(path, 'r')
-        manifest = json.loads(dec(f.read()))
+        manifest = f.read()
         self.status.t_bytes_d = self.status.t_bytes_d + f.tell()
         f.close()
         return manifest
+
+    def write_config(self, settings):
+        path = os.path.join(self.path, 'config')
+        f = open(path, 'w')
+        f.write(settings)
+        f.close()
+    
+    def read_config(self):
+        path = os.path.join(self.path, 'config')
+        f = open(path, 'r')
+        settings = f.read()
+        f.close()
+        return settings
 
     def del_manifest(self, mid):
         path = os.path.join(self.path, '%s.manifest' % mid )
@@ -116,9 +215,6 @@ class LocalTransport:
         manifestids.sort()
         return manifestids
 
-    def refresh_cache(self):
-        pass
-
 class S3Transport:
 
     def __init__(self, bucket, c = None, status = None):
@@ -130,9 +226,6 @@ class S3Transport:
             self.b = c.get_bucket(bucket)
         except boto.exception.S3ResponseError:
             self.b = c.create_bucket(bucket)
-
-    def prepare_for_restore(self, chunks):
-        pass
 
     def chunk_exists(self, chunkhash):
         chunkhash = hexlify(chunkhash)
@@ -170,19 +263,19 @@ class S3Transport:
         self.status.unwait()
         return chunks
 
-    def write_manifest(self, manifest, enc):
-        key = 'manifest.%s' % int(time())
+    def write_manifest(self, manifest, mid):
+        key = 'manifest.%s' % int(mid)
         k = self.b.new_key(key)
-        data = enc(json.dumps(manifest))
+        data = manifest
         k.set_contents_from_string(data)
         self.status.t_bytes_u += len(data)
 
-    def read_manifest(self, mid, dec):
+    def read_manifest(self, mid):
         k = Key(self.b)
         k.key = 'manifest.%s' % mid
         data = k.get_contents_as_string()
         self.status.t_bytes_d += len(data)
-        return json.loads(dec(data))
+        return data
 
     def del_manifest(self, mid):
         self.status.wait('Deleting manifest %d' % (mid, ))
@@ -199,10 +292,7 @@ class S3Transport:
         self.status.unwait()
         return manifestids
 
-    def refresh_cache(self):
-        pass
-
-class S3GlacierTransport:
+class S3GlacierTransport(S3Transport):
 
     def __init__(self, bucket, vault = None, c = None, gc = None,
                  status = None, retrieve_bph = 1491308088):
@@ -272,7 +362,11 @@ class S3GlacierTransport:
         self.jobs[aid] = self.describe_job(job['JobId'])
 
     def prepare_for_restore(self, chunks):
-        self.chunk_queue = chunks[:]
+        self.chunk_queue = []
+        for chunk in self.list_chunks():
+            if chunk in chunks:
+                chunks.remove(chunk)
+                self.chunk_queue.append(chunk)
         self.add_more_jobs()
 
     def wait_on_job(self, job):
@@ -453,28 +547,28 @@ class S3GlacierTransport:
         self.status.t_bytes_d += len(data)
         return data
 
-    def write_manifest(self, manifest, enc):
-        key = 'manifest.%s' % int(time())
-        k = self.b.new_key(key)
-        data = enc(json.dumps(manifest))
-        k.set_contents_from_string(data)
-        self.status.t_bytes_u += len(data)
+#    def write_manifest(self, manifest, enc):
+#        key = 'manifest.%s' % int(time())
+#        k = self.b.new_key(key)
+#        data = enc(json.dumps(manifest))
+#        k.set_contents_from_string(data)
+#        self.status.t_bytes_u += len(data)
 
-    def read_manifest(self, mid, dec):
-        self.status.wait('Reading manifest %d' % (mid, ))
-        k = Key(self.b)
-        k.key = 'manifest.%s' % mid
-        data = k.get_contents_as_string()
-        self.status.unwait()
-        self.status.t_bytes_d += len(data)
-        return json.loads(dec(data))
-
-    def list_manifest_ids(self):
-        self.status.wait('Listing manifests...')
-        manifestids = []
-        for key in self.b.list(prefix='manifest.'):
-            filepre, manifestid = key.key.split('.', 2)
-            manifestids.append(int(manifestid))
-        manifestids.sort()
-        self.status.unwait()
-        return manifestids
+#    def read_manifest(self, mid, dec):
+#        self.status.wait('Reading manifest %d' % (mid, ))
+#        k = Key(self.b)
+#        k.key = 'manifest.%s' % mid
+#        data = k.get_contents_as_string()
+#        self.status.unwait()
+#        self.status.t_bytes_d += len(data)
+#        return json.loads(dec(data))
+#
+#    def list_manifest_ids(self):
+#        self.status.wait('Listing manifests...')
+#        manifestids = []
+#        for key in self.b.list(prefix='manifest.'):
+#            filepre, manifestid = key.key.split('.', 2)
+#            manifestids.append(int(manifestid))
+#        manifestids.sort()
+#        self.status.unwait()
+#        return manifestids

@@ -10,8 +10,12 @@ def init(config, compression = None):
 
 def compress(config, data):
     if config['compression'] == 'bz2':
-        return b'bz2' + bz2.compress(data)
-    if config['compression'] == 'none':
+        compressed = bz2.compress(data)
+        if len(compressed) < data:
+            return b'bz2' + bz2.compress(data)
+        else: # bz2'ed random data is larger than not
+            return b'off' + data
+    if config['compression'] == 'off':
         return b'off' + data
     raise flexceptions.CompressionError
 

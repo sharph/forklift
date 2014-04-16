@@ -46,20 +46,24 @@ def aes_decrypt(config, ciphertext):
     return plaintext[:length]
 
 def encrypt(config, plaintext):
-    return b'aes' + aes_encrypt(config, plaintext)
+    if config['crypto'] == 'aes':
+        return b'aes' + aes_encrypt(config, plaintext)
+    if config['crypto'] == 'off':
+        return b'off' + plaintext
+    raise EncryptionError
+    
 
 def decrypt(config, ciphertext):
     if ciphertext[:3] == b'aes':
         return aes_decrypt(config, ciphertext[3:])
+    if ciphertext[:3] == b'off':
+        return ciphertext[3:]
     raise EncryptionError
 
 def hmac(config, message):
     return HMAC.new(b64d(config['sha256hmac_key']),
                     message,
                     SHA256).digest()
-
-def encrypted_hmac(config, plaintext):
-    pass
 
 def encrypt_then_mac(config, plaintext):
     ciphertext = encrypt(config, plaintext)
@@ -76,13 +80,33 @@ def auth_then_decrypt(config, ciphertext):
         raise EncryptionError
     return decrypt(config, ciphertext)
 
-def new_passphrase(config, passphrase):
-    salt = Random.new().read(8) # 64-bit salt
+def new_passphrase(config, passphrase, salt = None):
+    if salt is None:
+        salt = Random.new().read(8) # 64-bit salt
     pbkdf2 = PBKDF2(passphrase, salt)
     config['passphrase_salt'] = b64e(salt)
     config['passphrase_aes_key'] = b64e(pbkdf2.read(32)) # AES256
     config['passphrase_sha256hmac_key'] = b64e(pbkdf2.read(
                                                 SHA256.digest_size))
+
+def _config_from_passphrase(passphrase, salt = None):
+    config = {}
+    new_passphrase(config, passphrase, salt)
+    config['aes_key'] = config['passphrase_aes_key']
+    config['sha256hmac_key'] = config['passphrase_sha256hmac_key']
+    
+def decrypt_config(data, passphrase):
+    salt, data = data[:8], data[8:]
+    config = _config_from_passphrase(passphrase, salt)
+    return auth_then_decrypt(config, data)
+
+def encrypt_config(config, config_data):
+    enc_config = {'aes_key': config['passphrase_aes_key'],
+                  'sha256hmac_key': config['passphrase_sha256hmac_key'],
+                  'crypto': config['crypto']}
+    return b64d(config['passphrase_salt']) + encrypt_then_mac(enc_config,
+                                                              config_data)
+    
 
     
 #    def set_key(self, salt = None):
