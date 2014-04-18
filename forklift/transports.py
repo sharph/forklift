@@ -75,10 +75,10 @@ class Transport:
         '''
         
         for chunk in self.list_chunks():
-            try:
-                chunks.remove(chunk)
-            except ValueError:
-                pass
+            for t in chunks:
+                if t[0] == chunk:
+                    chunks.remove(t)
+                    break
 
     def refresh_cache(self):
         pass
@@ -97,7 +97,8 @@ class MetaTransport(Transport):
         Also, attaches a status object to the transports so that they can
         update the UI.
         '''
-
+        
+        self.status = status
         self.transports = []
         if 'destination' not in config:
             return
@@ -242,7 +243,7 @@ class LocalTransport(Transport):
     def chunk_exists(self, chunkhash):
         return os.path.exists(self.get_path(chunkhash)[1])
 
-    def write_chunk(self, chunkhash, data):
+    def _write_chunk(self, chunkhash, data):
         chunkdir, chunkpath = self.get_path(chunkhash)
         try:
             os.makedirs(chunkdir)
@@ -254,7 +255,7 @@ class LocalTransport(Transport):
         self.status.t_chunks_u += 1
         f.close()
 
-    def read_chunk(self, chunkhash):
+    def _read_chunk(self, chunkhash):
         chunkdir, chunkpath = self.get_path(chunkhash)
         f = open(chunkpath, 'rb')
         data = f.read()
@@ -343,7 +344,7 @@ class S3Transport(Transport):
         k.key = 'data/' + chunkhash
         return k.exists()
 
-    def write_chunk(self, chunkhash, data):
+    def _write_chunk(self, chunkhash, data):
         chunkhash = hexlify(chunkhash)
         k = self.b.new_key('data/' + chunkhash)
         k.set_contents_from_string(data)
@@ -427,20 +428,21 @@ class S3GlacierTransport(S3Transport):
             self.v = gc.create_vault(vault)
         self.gl1 = self.v.layer1
         self.gc = gc
-        self.glacier_cache_dir = os.path.join(os.environ['HOME'],
-                                              '.forklift')
-        self.glacier_cache_file = os.path.join(self.glacier_cache_dir,
-                                               vault + '-cache')
-        self.glacier_cache = {}
-        try:
-            os.mkdir(self.glacier_cache_dir)
-        except OSError:
-            pass
-        self.load_archive_ids()
         self.get_jobs()
         self.chunk_queue = []
+        self.aid_cache = {}
         self.last_job_creation = 0
         self.bph = retrieve_bph
+
+    def _get_aid(self, chunkhash):
+        if chunkhash not in self.aid_cache:
+            self.aid_cache[chunkhash] = S3Transport._read_chunk(self,
+                                                                chunkhash)
+        return self.aid_cache[chunkhash]
+
+    def _set_aid(self, chunkhash, aid):
+        S3Transport._write_chunk(self, chunkhash, aid)
+        self.aid_cache[chunkhash] = aid
 
     def add_more_jobs(self):
         t = time()
@@ -451,10 +453,7 @@ class S3GlacierTransport(S3Transport):
         while self.chunk_queue != [] and bth < self.bph:
             chunk, size = self.chunk_queue.pop(0)
             chunkhex = hexlify(chunk)[:8]
-            chunkhash = b64encode(chunk)
-            if chunkhash not in self.glacier_cache:
-                raise Exception('chunk not in glacier cache')
-            aid = self.glacier_cache[chunkhash]
+            aid = self._get_aid(chunk)
             if aid not in self.jobs or \
                     self.jobs[aid]['StatusCode'] == 'Failed':
                 self.status.wait('Creating job for %s...' % (chunkhex,))
@@ -462,7 +461,6 @@ class S3GlacierTransport(S3Transport):
                 self.add_job(aid)
                 bth += size
         self.status.unwait()
-        
 
     def add_job(self, aid):
         job_data = {'ArchiveId': aid,
@@ -473,10 +471,12 @@ class S3GlacierTransport(S3Transport):
 
     def prepare_for_restore(self, chunks):
         self.chunk_queue = []
+
         for chunk in self.list_chunks():
-            if chunk in chunks:
-                chunks.remove(chunk)
-                self.chunk_queue.append(chunk)
+            for t in chunks:
+                if t[0] == chunk:
+                    chunks.remove(t)
+                    self.chunk_queue.append(t)
         self.add_more_jobs()
 
     def wait_on_job(self, job):
@@ -508,14 +508,14 @@ class S3GlacierTransport(S3Transport):
         return jobs
 
     def describe_job(self, jobid):
-        while True:
+        def describe(jobid):
             try:
                 return json.loads(self.gl1.describe_job(self.vault,
                                                         jobid).read())
             except socket.gaierror:
-                sleep(60)
-                continue
-
+                raise TryAgain
+        
+        return self._backoff(lambda: describe(jobid), Fail)
 
     def get_jobs(self):
         self.inv_retrieval_job = None
@@ -531,84 +531,30 @@ class S3GlacierTransport(S3Transport):
                     self.jobs[job['ArchiveId']]['StatusCode'] == 'Failed':
                     self.jobs[job['ArchiveId']] = job
 
-    def refresh_cache(self):
-        self.status.wait('Waiting on glacier inventory')
-        if self.inv_retrieval_job is None:
-            self.inv_retrieval_job = self.retrieve_inventory()
-        while self.inv_retrieval_job.status_code == 'InProgress':
-            sleep(60 * 10) # 10 minutes
-            self.inv_retrieval_job = self.v.get_job(
-                                        self.inv_retrieval_job.id)
-        if self.inv_retrieval_job.status_code != 'Succeeded':
-            raise Exception('Inventory failed!')
-        self.glacier_cache = {}
-        for archive in self.inv_retrieval_job.get_output()['ArchiveList']:
-            self.glacier_cache[archive['ArchiveDescription']] = \
-                archive['ArchiveId']
-        self.save_archive_ids()
-        self.status.unwait()
-        
-    def load_archive_ids(self):
-        try:
-            f = open(self.glacier_cache_file, 'r')
-            self.glacier_cache = json.load(f)
-            f.close()
-        except IOError:
-            self.save_archive_ids()
-
-    def save_archive_ids(self):
-        try:
-            f = open(self.glacier_cache_file, 'w')
-            f.write(json.dumps(self.glacier_cache))
-            f.close()
-        except KeyboardInterrupt:
-            f.close()
-            self.save_archive_ids()
-            raise KeyboardInterrupt
-
     def del_chunk(self, chunkhash):
-        chunkhex = hexlify(chunkhash)
-        chunkhash = b64encode(chunkhash)
-        self.status.verbose('deleting %s' % (chunkhex,))
-        aid = self.glacier_cache[chunkhash]
-        del self.glacier_cache[chunkhash]
-        self.save_archive_ids()
+        S3Transport.del_chunk(self, chunkhash)
+        aid = self._get_aid(chunkhash)
+        del self_aid_cache[chunkhash]
         self.v.delete_archive(aid)
 
-    def list_chunks(self):
-        return map(lambda x: b64decode(x), self.glacier_cache.keys())
-
-    def del_manifest(self, mid):
-        self.status.wait('Deleting manifest %d' % (mid, ))
-        self.b.delete_key('manifest.%d' % (mid, ))
-        self.status.unwait()
-
-    def chunk_exists(self, chunkhash):
-        chunkhash = b64encode(chunkhash)
-        return chunkhash in self.glacier_cache
-
-    def write_chunk(self, chunkhash, data):
-        chunkhash = b64encode(chunkhash)
+    def _write_chunk(self, chunkhash, data):
         try:
-            writer = self.v.create_archive_writer(description=chunkhash)
+            writer = self.v.create_archive_writer(description=
+                                                  b64encode(chunkhash))
             writer.write(data)
             writer.close()
         except glacierexceptions.UnexpectedHTTPResponseError as err:
             raise TryAgain
         except socket.gaierror:
             raise TryAgain
-        self.glacier_cache[chunkhash] = writer.get_archive_id()
-        self.save_archive_ids()
+        self._set_aid(chunkhash, writer.get_archive_id())
         self.status.t_chunks_u += 1
         self.status.t_bytes_u += len(data)
 
     def _read_chunk(self, chunkhash):
-        chunkhash = b64encode(chunkhash)
-        if chunkhash not in self.glacier_cache:
-            raise Exception('chunk not in glacier cache!')
-        aid = self.glacier_cache[chunkhash]
+        aid = self._get_aid(chunkhash)
         if aid not in self.jobs or self.jobs[aid]['StatusCode'] == 'Failed':
-            self.chunk_queue.insert(0, (b64decode(chunkhash), 16 * 1024 * 1024))
+            self.chunk_queue.insert(0, (chunkhash, 16 * 1024 * 1024))
         ready_job = self.wait_on_job(self.jobs[aid])
 
         try:

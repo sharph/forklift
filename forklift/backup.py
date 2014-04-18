@@ -357,7 +357,6 @@ class Backup:
             return
         mids = self.transport.list_manifest_ids()
         if len(mids) > 0:
-            self.status.println( mids[0])
             manifest = self._load_manifest(mids[-1])
             self.oldfiles = dict(map(lambda x: (x['n'], x),
                                      manifest['files']))
