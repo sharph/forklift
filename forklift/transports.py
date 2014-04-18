@@ -159,6 +159,7 @@ class MetaTransport(Transport):
         '''
         Writes chunk in enough places to satisfy redundancy requirements.
         '''
+
         wtransports = []
         redundancy = self.redundancy
         for t in self.wtransports:
@@ -210,7 +211,12 @@ class MetaTransport(Transport):
             t.write_manifest(manifest, mid)
 
     def read_manifest(self, mid):
-        return self.transports[0].read_manifest(mid)
+        for t in self.transports:
+            try:
+                return t.read_manifest(mid)
+            except Fail:
+                pass
+        raise Fail
 
     def del_manifest(self, mid):
         for t in self.transports:
@@ -290,7 +296,10 @@ class LocalTransport(Transport):
 
     def read_manifest(self, mid):
         path = os.path.join(self.path, '%s.manifest' % mid )
-        f = open(path, 'r')
+        try:
+            f = open(path, 'r')
+        except IOError:
+            raise Fail
         manifest = f.read()
         self.status.t_bytes_d = self.status.t_bytes_d + f.tell()
         f.close()

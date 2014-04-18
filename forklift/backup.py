@@ -48,8 +48,12 @@ class Backup:
         return crypto.hmac(self.config, data)
     
     def _enc(self, data):
-        return crypto.encrypt(self.config,
-                              compression.compress(self.config, data))
+        encrypted = crypto.encrypt(self.config,
+                                   compression.compress(self.config, data))
+        if len(data) > 0:
+            self.status.verbose(" compression -> %d%%" % 
+                                (int(float(len(encrypted)) / float(len(data)) * 100), ))
+        return encrypted
 
     def _dec(self, data):
         return compression.decompress(self.config,
