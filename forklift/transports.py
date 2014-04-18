@@ -16,8 +16,88 @@ import boto.glacier.exceptions as glacierexceptions
 import boto
 
 
-class MetaTransport:
+class Fail(Exception):
+    pass
+
+class TryAgain(Exception):
+    pass
+
+class Transport:
+    '''
+    
+    Class containing some helper's for child classes. A Transport is an object
+    which abstracts remote storage backends.
+    
+    '''
+
+    def _backoff(self, op, failexception):
+        '''
+        Method to implement an exponential backoff algorithm aroud a function.
+        Ruturns the value of op() and retries if a TryAgain exception is
+        raised. Raises whatever excpetion is passed as failexception if
+        maxtries is reached.
+
+        Ideally you would pass this method a lambda for op.
+        '''
+        backoff = 2
+        maxbackoff = 60 * 2
+        maxtries = 80
+        for tries in xrange(maxtries):
+            try:
+                return op()
+            except TryAgain:
+                self.status.wait('err waiting %d seconds' %
+                                 (backoff, ))
+                sleep(backoff)
+                self.status.unwait()
+                backoff *= 2
+                if backoff > maxbackoff:
+                    backoff = maxbackoff
+        raise failexception
+
+    def read_chunk(self, chunkhash):
+        '''Wrap the private _read_chunk method with a backoff algorithm.'''
+
+        return self._backoff(lambda: self._read_chunk(chunkhash), Fail)
+
+    def write_chunk(self, chunkhash, data):
+        '''Wrap the private _write_chunk method with a backoff algorithm.'''
+
+        return self._backoff(lambda: self._write_chunk(chunkhash, data),
+                             Fail)
+
+    def prepare_for_restore(self, chunks):
+        '''
+        Remove any chunks that are stored in this backend from the chunk
+        list passed to this method, so that any backends called later
+        with this method can prepare appropriately (such as the Glacier
+        backend.)
+        '''
+        
+        for chunk in self.list_chunks():
+            try:
+                chunks.remove(chunk)
+            except ValueError:
+                pass
+
+    def refresh_cache(self):
+        pass
+ 
+class MetaTransport(Transport):
+    '''
+    A MetaTransport is an object that sets up and contains real transports.
+    It knows how to properly delegate the functionality of a Transport
+    object to real transports, while handling redundancy and temporary
+    failure.
+    '''
+
     def __init__(self, config, status):
+        '''
+        Build a list of transport objects from a configuration structure.
+        Also, attaches a status object to the transports so that they can
+        update the UI.
+        '''
+
         self.transports = []
         if 'destination' not in config:
             return
@@ -35,16 +115,37 @@ class MetaTransport:
     
         if t_config['type'] == 'local':
             return LocalTransport(t_config['path'], status)
+
         elif t_config['type'] == 's3':
             s3conn = boto.connect_s3(t_config['aws_access_key_id'],
                                      t_config['aws_secret_access_key'])
             return S3Transport(t_config['bucket'], s3conn, status)
+
+        elif t_config['type'] == 'glacier':
+            s3conn = boto.connect_s3(t_config['aws_access_key_id'],
+                                     t_config['aws_secret_access_key'])
+            glconn = boto.connect_glacier(t_config['aws_access_key_id'],
+                                          t_config['aws_secret_access_key'])
+            bph = t_config['bph'] if 'bph' in t_config else 1491308088
+            vault = t_config['vault'] if 'vault' in t_config else \
+                        t_config['bucket']
+            return S3GlacierTransport(t_config['bucket'],
+                                      vault,
+                                      s3conn,
+                                      glconn,
+                                      status,
+                                      bph)
 
     def prepare_for_restore(self, chunks):
         for t in self.transports:
             t.prepare_for_restore(chunks)
 
     def chunk_exists(self, chunk):
+        '''
+        Returns True if chunk exists in enough places to satisfy redundancy
+        requirements.
+        '''
+
         count = 0
         for t in self.transports:
             if t.chunk_exists(chunk):
@@ -54,6 +155,9 @@ class MetaTransport:
         return False
 
     def write_chunk(self, chunkhash, data):
+        '''
+        Writes chunk in enough places to satisfy redundancy requirements.
+        '''
         wtransports = []
         redundancy = self.redundancy
         for t in self.wtransports:
@@ -64,13 +168,26 @@ class MetaTransport:
         for n, t in enumerate(wtransports):
             if n >= self.redundancy:
                 break
-            t.write_chunk(chunkhash, data)
+            self._backoff(lambda: t.write_chunk(chunkhash, data), Fail)
         self.wtransports.append(self.wtransports.pop(0))
 
-    def read_chunk(self, chunkhash):
+    def _read_chunk(self, chunkhash):
+        '''
+        Private method to be called by read_chunk in parent class (Transport.)
+
+        If TryAgain is catched, move on to the next transport. If all
+        if all transports raise TryAgain, raise it from this function so that
+        _backoff can retry all the transports and handle backoff timing
+        appropriately.
+        '''
+
         for t in self.transports:
             if t.chunk_exists(chunkhash):
-                return t.read_chunk(chunkhash)
+                try:
+                    return t._read_chunk(chunkhash)
+                except TryAgain:
+                    pass
+        raise TryAgain
 
     def del_chunk(self, chunkhash):
         for t in self.transports:
@@ -78,6 +195,10 @@ class MetaTransport:
                 t.del_chunk(chunkhash)
 
     def list_chunks(self):
+        '''
+        Compile a list of all known chunks in all transports.
+        '''
+
         chunks = []
         for t in self.transports:
             chunks += t.list_chunks()
@@ -100,18 +221,7 @@ class MetaTransport:
             mids += t.list_manifest_ids()
         return sorted(list(set(mids)))
 
-
-class Transport:
-    def prepare_for_restore(self, chunks):
-        for chunk in self.list_chunks():
-            try:
-                chunks.remove(chunk)
-            except ValueError:
-                pass
-
-    def refresh_cache(self):
-        pass
-        
+       
 
 class LocalTransport(Transport):
 
@@ -215,7 +325,7 @@ class LocalTransport(Transport):
         manifestids.sort()
         return manifestids
 
-class S3Transport:
+class S3Transport(Transport):
 
     def __init__(self, bucket, c = None, status = None):
         self.status = status
@@ -240,7 +350,7 @@ class S3Transport:
         self.status.t_chunks_u += 1
         self.status.t_bytes_u += len(data)
 
-    def read_chunk(self, chunkhash):
+    def _read_chunk(self, chunkhash):
         chunkhash = hexlify(chunkhash)
         k = Key(self.b)
         k.key = 'data/' + chunkhash
@@ -479,38 +589,20 @@ class S3GlacierTransport(S3Transport):
 
     def write_chunk(self, chunkhash, data):
         chunkhash = b64encode(chunkhash)
-        backoff = 2
-        tries = 0
-        while True:
-            try:
-                writer = self.v.create_archive_writer(description=chunkhash)
-                writer.write(data)
-                writer.close()
-                chunkwritten = True
-            except glacierexceptions.UnexpectedHTTPResponseError as err:
-                tries += 1
-                if tries > self.retries:
-                    raise ChunkWriteError
-                self.status.wait('%s waiting %d seconds' %
-                                 (err.message, backoff))
-                sleep(backoff)
-                self.status.unwait()
-                backoff *= 2
-                if backoff > 240:
-                    backoff = 240
-                continue
-            except socket.gaierror:
-                self.status.wait('Network issues... waiting...')
-                sleep(60)
-                self.status.unwait()
-                continue
-            break
+        try:
+            writer = self.v.create_archive_writer(description=chunkhash)
+            writer.write(data)
+            writer.close()
+        except glacierexceptions.UnexpectedHTTPResponseError as err:
+            raise TryAgain
+        except socket.gaierror:
+            raise TryAgain
         self.glacier_cache[chunkhash] = writer.get_archive_id()
         self.save_archive_ids()
         self.status.t_chunks_u += 1
         self.status.t_bytes_u += len(data)
 
-    def read_chunk(self, chunkhash):
+    def _read_chunk(self, chunkhash):
         chunkhash = b64encode(chunkhash)
         if chunkhash not in self.glacier_cache:
             raise Exception('chunk not in glacier cache!')
@@ -519,56 +611,14 @@ class S3GlacierTransport(S3Transport):
             self.chunk_queue.insert(0, (b64decode(chunkhash), 16 * 1024 * 1024))
         ready_job = self.wait_on_job(self.jobs[aid])
 
-        backoff = 2
-        tries = 0
-        while True:
-            try:
-                data = self.gl1.get_job_output(self.vault,
-                                               ready_job['JobId']).read()
-            except glacierexceptions.UnexpectedHTTPResponseError as err:
-                tries += 1
-                if tries > self.retries:
-                    raise ChunkReadError
-                self.status.wait('%s waiting %d seconds' %
-                                 (err.message, backoff))
-                sleep(backoff)
-                self.status.unwait()
-                backoff *= 2
-                if backoff > 240:
-                    backoff = 240
-                continue
-            except socket.gaierror:
-                self.status.wait('Network issues... waiting...')
-                sleep(60)
-                self.status.unwait()
-                continue
-            break
+        try:
+            data = self.gl1.get_job_output(self.vault,
+                                           ready_job['JobId']).read()
+        except glacierexceptions.UnexpectedHTTPResponseError as err:    
+            raise TryAgain
+        except socket.gaierror:
+            raise TryAgain
         self.status.t_chunks_d += 1
         self.status.t_bytes_d += len(data)
         return data
 
-#    def write_manifest(self, manifest, enc):
-#        key = 'manifest.%s' % int(time())
-#        k = self.b.new_key(key)
-#        data = enc(json.dumps(manifest))
-#        k.set_contents_from_string(data)
-#        self.status.t_bytes_u += len(data)
-
-#    def read_manifest(self, mid, dec):
-#        self.status.wait('Reading manifest %d' % (mid, ))
-#        k = Key(self.b)
-#        k.key = 'manifest.%s' % mid
-#        data = k.get_contents_as_string()
-#        self.status.unwait()
-#        self.status.t_bytes_d += len(data)
-#        return json.loads(dec(data))
-#
-#    def list_manifest_ids(self):
-#        self.status.wait('Listing manifests...')
-#        manifestids = []
-#        for key in self.b.list(prefix='manifest.'):
-#            filepre, manifestid = key.key.split('.', 2)
-#            manifestids.append(int(manifestid))
-#        manifestids.sort()
-#        self.status.unwait()
-#        return manifestids

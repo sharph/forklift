@@ -3,20 +3,19 @@
 import os
 import os.path
 import sys
+import datetime
+import json
 
 from base64 import b64encode, b64decode
 from binascii import hexlify, unhexlify
 
 from time import time
-import datetime
 from getpass import getpass
 
-import json
-import yaml
 import compression
 import crypto
 import transports
-from status import *
+
 from flexceptions import *
 
 class Backup:
@@ -80,9 +79,6 @@ class Backup:
                 encdata = None
             yield (digest, encdata)
             data = f.read(self.config['chunksize'])
-        del data
-        del encdata
-        del digest
 
     def load_config_remote(self, passphrase):
         config = self.transport.read_config()
@@ -118,7 +114,6 @@ class Backup:
 
     def set_passphrase(self, passphrase):
         crypto.new_passphrase(self.config, passphrase)
-        #self.save_config_local()
 
     def fetch_chunk(self, chunkhash, verifyonly = False):
         '''Fetches a chunk of the given hash value. First it looks in
@@ -127,7 +122,7 @@ class Backup:
             for pos, path in self.blockmap[chunkhash]:
                 for pathtotry in [path, path + '.' + str(self.inittime)]:
                     try:
-                        f = open(pathtotry, 'r')
+                        f = open(self._backup_to_syspath(pathtotry), 'r')
                         f.seek(pos)
                         data = f.read(self.config['chunksize'])
                         if self._digest(data) == chunkhash:
@@ -176,14 +171,10 @@ class Backup:
             except OSError:
                 pass
             os.rename(tmppath, path)
-        except Exception as e:
+        except BaseException as e:
             self.status.verbose('Cleaning up temporary file!')
-            f.close()
-            os.unlink(tmppath)
-            raise
-        except KeyboardInterrupt:
-            self.status.verbose('Cleaning up temporary file!')
-            f.close()
+            if not f.closed:
+                f.close()
             os.unlink(tmppath)
             raise
         os.chmod(path, file_manifest['mode'])
@@ -241,9 +232,8 @@ class Backup:
                 chunk = b64decode(chunk)
                 if chunk not in self.blockmap:
                     self.blockmap[chunk] = []
-                p = os.path.join(self.config['local_paths'][0], f['n'])
                 self.blockmap[chunk].append((pos * self.config['chunksize'],
-                                             p))
+                                             f['n']))
 
     def find_needed_chunks(self, chunklist):
         '''Returns a list of chunks not on the local filesystem. Chunklist
@@ -372,27 +362,4 @@ class Backup:
             self.oldfiles = dict(map(lambda x: (x['n'], x),
                                      manifest['files']))
             return manifest
-        #else:
-        #    self.status.println(
-        #        'Could not find any manifest files. Initializing!')
-        #    null_manifest = {'version': 1}
-        #    self.transport.write_manifest(null_manifest,
-        #                                  self.crypto.encrypt_manifest)
  
-def main():
-    status = ConsoleStatus()
- 
-   
-    b = Backup(status=status)
-    b.load_config_local('config')
-#    b.set_passphrase('test')
-#    b.save_config_remote()
-#    b.snap_tree()
-    b.restore_tree()
-    status.end()
-    exit(0)
-
-
-
-if __name__ == '__main__':
-    main()
