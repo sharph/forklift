@@ -236,7 +236,8 @@ class LocalTransport(Transport):
 
     def get_path(self, chunkhash):
         chunkhash = hexlify(chunkhash)
-        chunkdir = os.path.join(self.path, 'data', chunkhash[:2])
+        chunkdir = os.path.join(self.path, 'data', chunkhash[:3],
+                                chunkhash[3:6])
         chunkpath = os.path.join(chunkdir, chunkhash)
         return chunkdir, chunkpath
 
