@@ -352,12 +352,18 @@ class S3Transport(Transport):
         chunkhash = hexlify(chunkhash)
         k = Key(self.b)
         k.key = 'data/' + chunkhash
-        return k.exists()
+        try:
+            return k.exists()
+        except socket.gaierror:
+            raise TryAgain
 
     def _write_chunk(self, chunkhash, data):
         chunkhash = hexlify(chunkhash)
-        k = self.b.new_key('data/' + chunkhash)
-        k.set_contents_from_string(data)
+        try:
+            k = self.b.new_key('data/' + chunkhash)
+            k.set_contents_from_string(data)
+        except socket.gaierror:
+            raise TryAgain
         self.status.t_chunks_u += 1
         self.status.t_bytes_u += len(data)
 
