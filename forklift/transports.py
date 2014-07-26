@@ -228,6 +228,18 @@ class MetaTransport(Transport):
             mids += t.list_manifest_ids()
         return sorted(list(set(mids)))
 
+    def write_config(self, config):
+        for t in self.transports:
+            t.write_config(config)
+
+    def read_config(self, config):
+        for t in self.transports:
+            try:
+                return t.read_config()
+            except Fail:
+                pass
+        raise Fail
+
        
 
 class LocalTransport(Transport):
@@ -418,6 +430,19 @@ class S3Transport(Transport):
         manifestids.sort()
         self.status.unwait()
         return manifestids
+
+    def read_config(self, config):
+        k = Key(self.b)
+        k.key = 'config'
+        data = k.get_contents_as_string()
+        self.status.t_bytes_d += len(data)
+        return data
+
+    def write_config(self, config):
+        key = 'config'
+        k = self.b.new_key(key)
+        k.set_contents_from_string(config)
+        self.status.t_bytes_u += len(config)
 
 class S3GlacierTransport(S3Transport):
 
