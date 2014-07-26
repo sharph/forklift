@@ -83,7 +83,7 @@ def auth_then_decrypt(config, ciphertext):
 def new_passphrase(config, passphrase, salt = None):
     if salt is None:
         salt = Random.new().read(8) # 64-bit salt
-    pbkdf2 = PBKDF2(passphrase, salt)
+    pbkdf2 = PBKDF2(passphrase, salt, iterations=1<<14)
     config['passphrase_salt'] = b64e(salt)
     config['passphrase_aes_key'] = b64e(pbkdf2.read(32)) # AES256
     config['passphrase_sha256hmac_key'] = b64e(pbkdf2.read(

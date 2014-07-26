@@ -201,10 +201,10 @@ class MetaTransport(Transport):
         Compile a list of all known chunks in all transports.
         '''
 
-        chunks = []
+        chunks = set()
         for t in self.transports:
-            chunks += t.list_chunks()
-        return list(set(chunks))
+            chunks.update(t.list_chunks())
+        return chunks
 
     def write_manifest(self, manifest, mid):
         for t in self.transports:
@@ -573,9 +573,9 @@ class S3GlacierTransport(S3Transport):
                     self.jobs[job['ArchiveId']] = job
 
     def del_chunk(self, chunkhash):
-        S3Transport.del_chunk(self, chunkhash)
         aid = self._get_aid(chunkhash)
-        del self_aid_cache[chunkhash]
+        S3Transport.del_chunk(self, chunkhash)
+        del self.aid_cache[chunkhash]
         self.v.delete_archive(aid)
 
     def _write_chunk(self, chunkhash, data):

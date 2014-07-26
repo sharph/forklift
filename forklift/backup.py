@@ -186,18 +186,29 @@ class Backup:
                         int(file_manifest['mtime'])))
         self.status.verbose(file_manifest['n'])
 
-    def get_chunklist(self, manifest, return_sizes = False):
+    def get_chunklist(self,
+                      manifest,
+                      return_sizes = False,
+                      dupesokay = False):
         '''Fetches a full list of chunk digests from a manifest.'''
 
         chunklist = []
         chunklist_sizes = []
         if 'files' not in manifest:
             return chunklist
+        if dupesokay and not return_sizes:
+            chunklist = [b64decode(x) for f in manifest['files']
+                            for x in f['b']]
+#            chunklist = map(b64decode, sum(map(lambda x: x['b'],
+#                                               manifest['files']),
+#                                           []))
+            print('returning')
+            return chunklist
         for file_manifest in manifest['files']:
             for count, chunk in enumerate(file_manifest['b']):
                 chunk = b64decode(chunk)
                 if chunk not in chunklist:
-                    chunklist.append(chunk)
+                    chunklist.add(chunk)
                     if (count + 1) * self.config['chunksize'] > \
                             file_manifest['s']:
                         chunklist_sizes.append(file_manifest['s'] %
@@ -217,15 +228,15 @@ class Backup:
         keep_mids = [mid for mid in mids if mid >= t]
         for mid in delete_mids:
             self.transport.del_manifest(mid)
-        chunks = []
+        keep_chunks = set()
         for mid in keep_mids:
             manifest = self._load_manifest(mid)
-            chunks = chunks + self.get_chunklist(manifest)
-        existing_chunks = self.transport.list_chunks()
-        keep_chunks = list(set(chunks))
-        for chunk in existing_chunks:
-            if chunk not in keep_chunks:
-                self.transport.del_chunk(chunk)
+            self.status.verbose('merging {}'.format(mid))
+            keep_chunks.update(self.get_chunklist(manifest,
+                                                  dupesokay=True))
+        existing_chunks = set(self.transport.list_chunks())
+        for chunk in existing_chunks - keep_chunks:
+            self.transport.del_chunk(chunk)
         
     def build_block_map(self, manifest):
         '''Builds a dict (as part of the object) which contains each chunkhash
