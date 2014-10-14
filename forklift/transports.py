@@ -19,15 +19,18 @@ import boto
 class Fail(Exception):
     pass
 
+
 class TryAgain(Exception):
     pass
 
+class NotRedundant(Exception):
+    pass
+
+
 class Transport:
     '''
-    
     Class containing some helper's for child classes. A Transport is an object
     which abstracts remote storage backends.
-    
     '''
 
     def _backoff(self, op, failexception):
@@ -73,7 +76,7 @@ class Transport:
         with this method can prepare appropriately (such as the Glacier
         backend.)
         '''
-        
+
         for chunk in self.list_chunks():
             for t in chunks:
                 if t[0] == chunk:
@@ -82,7 +85,8 @@ class Transport:
 
     def refresh_cache(self):
         pass
- 
+
+
 class MetaTransport(Transport):
     '''
     A MetaTransport is an object that sets up and contains real transports.
@@ -97,7 +101,7 @@ class MetaTransport(Transport):
         Also, attaches a status object to the transports so that they can
         update the UI.
         '''
-        
+
         self.status = status
         self.transports = []
         if 'destination' not in config:
@@ -106,14 +110,14 @@ class MetaTransport(Transport):
             self.redundancy = config['redundancy']
         else:
             self.redundancy = 3 if len(config['destination']) >= 3 else \
-                                    len(config['destination'])
+                len(config['destination'])
         for t_config in config['destination']:
             self.transports.append(self._setup_transport(t_config, status))
         self.wtransports = self.transports[:]
 
     def _setup_transport(self, t_config, status):
         '''Given a config, returns a transport object.'''
-    
+
         if t_config['type'] == 'local':
             return LocalTransport(t_config['path'], status)
 
@@ -129,7 +133,7 @@ class MetaTransport(Transport):
                                           t_config['aws_secret_access_key'])
             bph = t_config['bph'] if 'bph' in t_config else 1491308088
             vault = t_config['vault'] if 'vault' in t_config else \
-                        t_config['bucket']
+                t_config['bucket']
             return S3GlacierTransport(t_config['bucket'],
                                       vault,
                                       s3conn,
@@ -167,11 +171,22 @@ class MetaTransport(Transport):
                 redundancy -= 1
             else:
                 wtransports.append(t)
-        for n, t in enumerate(wtransports):
-            if n >= self.redundancy:
+        n = 0
+        for t in wtransports:
+            if n >= redundancy:
                 break
-            self._backoff(lambda: t.write_chunk(chunkhash, data), Fail)
+            try:
+                self._backoff(lambda: t.write_chunk(chunkhash, data), Fail)
+                n += 1
+            except Fail:
+                pass
         self.wtransports.append(self.wtransports.pop(0))
+        if n == 0:
+            if redundancy < self.redundancy:
+                raise NotRedundant
+            raise Fail
+        if n < redundancy:
+            raise NotRedundant
 
     def _read_chunk(self, chunkhash):
         '''
@@ -207,8 +222,16 @@ class MetaTransport(Transport):
         return chunks
 
     def write_manifest(self, manifest, mid):
+        fails = 0
         for t in self.transports:
-            t.write_manifest(manifest, mid)
+            try:
+                t.write_manifest(manifest, mid)
+            except Fail:
+                fails += 1
+        if fails > self.redundancy:
+            raise Fail
+        if fails > 0:
+            raise NotRedundant
 
     def read_manifest(self, mid):
         for t in self.transports:
@@ -225,7 +248,10 @@ class MetaTransport(Transport):
     def list_manifest_ids(self):
         mids = []
         for t in self.transports:
-            mids += t.list_manifest_ids()
+            try:
+                mids += t.list_manifest_ids()
+            except Fail:
+                pass
         return sorted(list(set(mids)))
 
     def write_config(self, config):
@@ -240,12 +266,12 @@ class MetaTransport(Transport):
                 pass
         raise Fail
 
-       
 
 class LocalTransport(Transport):
 
     def __init__(self, path, status):
         self.path = os.path.abspath(path)
+        self.tmpblock = os.path.join(self.path, 'temp')
         try:
             os.mkdir(self.path)
         except OSError:
@@ -268,11 +294,15 @@ class LocalTransport(Transport):
             os.makedirs(chunkdir)
         except os.error:
             pass
-        f = open(chunkpath, 'wb')
-        f.write(data)
-        self.status.t_bytes_u += f.tell()
-        self.status.t_chunks_u += 1
-        f.close()
+        try:
+            f = open(self.tmpblock, 'wb')
+            f.write(data)
+            self.status.t_bytes_u += f.tell()
+            self.status.t_chunks_u += 1
+            f.close()
+            os.rename(self.tmpblock, chunkpath)
+        except IOError:
+            raise Fail
 
     def _read_chunk(self, chunkhash):
         chunkdir, chunkpath = self.get_path(chunkhash)
@@ -298,16 +328,20 @@ class LocalTransport(Transport):
                 except TypeError:
                     pass
         return chunks
-    
+
     def write_manifest(self, manifest, mid):
-        path = os.path.join(self.path, '%s.manifest' % int(mid) )
-        f = open(path, 'w')
-        f.write(manifest)
-        self.status.t_bytes_u = self.status.t_bytes_u + f.tell()
-        f.close()
+        path = os.path.join(self.path, '%s.manifest' % int(mid))
+        try:
+            f = open(self.tmpblock, 'w')
+            f.write(manifest)
+            self.status.t_bytes_u = self.status.t_bytes_u + f.tell()
+            f.close()
+            os.rename(self.tmpblock, path)
+        except IOError:
+            raise Fail
 
     def read_manifest(self, mid):
-        path = os.path.join(self.path, '%s.manifest' % mid )
+        path = os.path.join(self.path, '%s.manifest' % mid)
         try:
             f = open(path, 'r')
         except IOError:
@@ -322,7 +356,7 @@ class LocalTransport(Transport):
         f = open(path, 'w')
         f.write(settings)
         f.close()
-    
+
     def read_config(self):
         path = os.path.join(self.path, 'config')
         f = open(path, 'r')
@@ -331,12 +365,15 @@ class LocalTransport(Transport):
         return settings
 
     def del_manifest(self, mid):
-        path = os.path.join(self.path, '%s.manifest' % mid )
+        path = os.path.join(self.path, '%s.manifest' % mid)
         os.remove(path)
-    
+
     def list_manifest_ids(self):
         self.status.wait('Listing manifests')
-        listing = os.listdir(self.path)
+        try:
+            listing = os.listdir(self.path)
+        except OSError:
+            raise Fail
         manifestids = []
         for filename in listing:
             if filename.find('.') == -1:
@@ -348,9 +385,10 @@ class LocalTransport(Transport):
         manifestids.sort()
         return manifestids
 
+
 class S3Transport(Transport):
 
-    def __init__(self, bucket, c = None, status = None):
+    def __init__(self, bucket, c=None, status=None):
         self.status = status
         if c is None:
             c = boto.connect_s3()
@@ -444,10 +482,11 @@ class S3Transport(Transport):
         k.set_contents_from_string(config)
         self.status.t_bytes_u += len(config)
 
+
 class S3GlacierTransport(S3Transport):
 
-    def __init__(self, bucket, vault = None, c = None, gc = None,
-                 status = None, retrieve_bph = 1491308088):
+    def __init__(self, bucket, vault=None, c=None, gc=None,
+                 status=None, retrieve_bph=1491308088):
         if vault is None:
             vault = bucket
         self.retries = 40
@@ -525,7 +564,7 @@ class S3GlacierTransport(S3Transport):
         job = self.describe_job(job['JobId'])
         while job['StatusCode'] == 'InProgress':
             self.status.wait('Waiting for glacier job')
-            sleep(60 * 5) # 5 minutes
+            sleep(60 * 5)  # 5 minutes
             self.add_more_jobs()
             job = self.describe_job(job['JobId'])
         if job['StatusCode'] != 'Succeeded':
@@ -555,7 +594,7 @@ class S3GlacierTransport(S3Transport):
                                                         jobid).read())
             except socket.gaierror:
                 raise TryAgain
-        
+
         return self._backoff(lambda: describe(jobid), Fail)
 
     def get_jobs(self):
@@ -569,7 +608,7 @@ class S3GlacierTransport(S3Transport):
                     job['StatusCode'] == 'Succeeded' or \
                     job['CreationDate'] < \
                         self.jobs[job['ArchiveId']]['CreationDate'] or \
-                    self.jobs[job['ArchiveId']]['StatusCode'] == 'Failed':
+                        self.jobs[job['ArchiveId']]['StatusCode'] == 'Failed':
                     self.jobs[job['ArchiveId']] = job
 
     def del_chunk(self, chunkhash):
@@ -580,11 +619,11 @@ class S3GlacierTransport(S3Transport):
 
     def _write_chunk(self, chunkhash, data):
         try:
-            writer = self.v.create_archive_writer(description=
-                                                  b64encode(chunkhash))
+            writer = self.v.create_archive_writer(
+                description=b64encode(chunkhash))
             writer.write(data)
             writer.close()
-        except glacierexceptions.UnexpectedHTTPResponseError as err:
+        except glacierexceptions.UnexpectedHTTPResponseError:
             raise TryAgain
         except socket.gaierror:
             raise TryAgain
@@ -601,7 +640,7 @@ class S3GlacierTransport(S3Transport):
         try:
             data = self.gl1.get_job_output(self.vault,
                                            ready_job['JobId']).read()
-        except glacierexceptions.UnexpectedHTTPResponseError as err:    
+        except glacierexceptions.UnexpectedHTTPResponseError:
             raise TryAgain
         except socket.gaierror:
             raise TryAgain

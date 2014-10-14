@@ -22,7 +22,7 @@ class Backup:
     '''A Backup object represents a backup or restore job, with a local
     path and an attached transport. A crypto object can also be attached.
     (If none is selected, we default to NullEncryption().'''
-    
+
     def __init__(self, config = None, status = None):
         if config is None:
             config = {}
@@ -46,7 +46,7 @@ class Backup:
 
     def _digest(self, data):
         return crypto.hmac(self.config, data)
-    
+
     def _enc(self, data):
         encrypted = crypto.encrypt(self.config,
                                    compression.compress(self.config, data))
@@ -108,7 +108,7 @@ class Backup:
         config = json.load(f)
         f.close()
         self.__init__(config, self.status)
-    
+
     def save_config_local(self, path = None):
         if path is None:
             path = self._local_config_path()
@@ -137,7 +137,7 @@ class Backup:
 
         if verifyonly:
             return None
-        
+
         data = self.transport.read_chunk(chunkhash)
         self.status.update()
         data = self._dec(data)
@@ -148,14 +148,14 @@ class Backup:
 
     def restore_file(self, file_manifest):
         '''Fetches and restores a file from a given manifest dict.
-        
+
         Manifest format:
         {'n': 'dir/Filename.txt',
          'b': ['123abc...', '234bcd...', 'more base64 encoded digests'],
          's': filesize,
          'mode': os stat mode,
          'mtime': modified time}'''
-        
+
         path = self._backup_to_syspath(file_manifest['n'])
         tmppath = path + '.' + str(self.inittime)
         try:
@@ -188,8 +188,8 @@ class Backup:
 
     def get_chunklist(self,
                       manifest,
-                      return_sizes = False,
-                      dupesokay = False):
+                      return_sizes=False,
+                      dupesokay=False):
         '''Fetches a full list of chunk digests from a manifest.'''
 
         chunklist = []
@@ -202,7 +202,6 @@ class Backup:
 #            chunklist = map(b64decode, sum(map(lambda x: x['b'],
 #                                               manifest['files']),
 #                                           []))
-            print('returning')
             return chunklist
         for file_manifest in manifest['files']:
             for count, chunk in enumerate(file_manifest['b']):
@@ -222,7 +221,7 @@ class Backup:
     def retention(self, t):
         '''Deletes all manifests older than t. Reads remaining manifests
         and removes unused chunks.'''
-        
+
         mids = self.transport.list_manifest_ids()
         delete_mids = [mid for mid in mids if mid < t]
         keep_mids = [mid for mid in mids if mid >= t]
@@ -231,13 +230,12 @@ class Backup:
         keep_chunks = set()
         for mid in keep_mids:
             manifest = self._load_manifest(mid)
-            self.status.verbose('merging {}'.format(mid))
             keep_chunks.update(self.get_chunklist(manifest,
                                                   dupesokay=True))
         existing_chunks = set(self.transport.list_chunks())
         for chunk in existing_chunks - keep_chunks:
             self.transport.del_chunk(chunk)
-        
+
     def build_block_map(self, manifest):
         '''Builds a dict (as part of the object) which contains each chunkhash
            and where it can potientially be found in the filesystem.'''
@@ -253,7 +251,7 @@ class Backup:
     def find_needed_chunks(self, chunklist):
         '''Returns a list of chunks not on the local filesystem. Chunklist
            should be a list of tuples with the chunkhash and the chunksize.'''
-        
+
         needed_chunks = []
         for chunk in chunklist:
             if self.fetch_chunk(chunk[0], verifyonly = True) is None:
@@ -263,7 +261,7 @@ class Backup:
 
     def restore_tree(self, mid = None):
         '''Restores the entire file tree for a given manifest id.'''
-    
+
         self.status.mode = self.status.RESTORING
         self.status.update()
         if mid is None:
@@ -312,7 +310,8 @@ class Backup:
                          'mtime': int(s.st_mtime),
                          'b': []}
         if rel_path in self.oldfiles and \
-               file_manifest['mtime'] == self.oldfiles[rel_path]['mtime']:
+               file_manifest['mtime'] == self.oldfiles[rel_path]['mtime'] and \
+               'd' not in self.oldfiles[rel_path]:  # 'd' is dirty
             file_manifest['b'] = self.oldfiles[rel_path]['b']
             file_manifest['s'] = self.oldfiles[rel_path]['s']
             self.status.chunks += len(file_manifest['b'])
@@ -325,7 +324,10 @@ class Backup:
         f = open(full_path,'rb')
         for chunkhash, chunkdata in self._get_chunks(f):
             if chunkdata is not None:
-                self.transport.write_chunk(chunkhash, chunkdata)
+                try:
+                    self.transport.write_chunk(chunkhash, chunkdata)
+                except transports.NotRedundant:  # chunk written to >= 1 dest
+                    file_manifest['d'] = 1  # mark file dirty
             file_manifest['b'].append(b64encode(chunkhash))
             self.status.chunks += 1
             self.status.update()
@@ -336,7 +338,7 @@ class Backup:
         self.status.update()
         self.status.filename(None)
         return file_manifest
-    
+
     def snap_tree(self):
         '''Uploads a full backup of tree to destination.'''
         self.status.mode = self.status.BACKING_UP
@@ -362,12 +364,15 @@ class Backup:
                                                             backup_path))
                     self.status.verbose(full_path)
 
-        self._save_manifest(manifest)
+        try:
+            self._save_manifest(manifest)
+        except transports.NotRedundant:
+            pass
         self.status.complete_operation()
 
     def get_last_manifest(self):
         '''Retrieves last manifest from destination for file comparison.'''
-        
+
         if self.oldfiles != {}:
             return
         mids = self.transport.list_manifest_ids()
@@ -376,4 +381,4 @@ class Backup:
             self.oldfiles = dict(map(lambda x: (x['n'], x),
                                      manifest['files']))
             return manifest
- 
+
