@@ -348,6 +348,7 @@ class Backup:
                     'files': []}
         self.m = manifest
         for path in self.config['local_paths']:
+            path = self._backup_to_syspath(path)
             for root, dirs, files in os.walk(path):
                 s = os.stat(root)
                 dir_manifest = {'n': self._syspath_to_backup(root),
