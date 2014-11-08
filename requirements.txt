@@ -1,0 +1,3 @@
+pycrypto
+pbkdf2
+boto
