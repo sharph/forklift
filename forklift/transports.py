@@ -124,6 +124,19 @@ class MetaTransport(Transport):
             return LocalTransport(t_config['path'], status)
 
         elif t_config['type'] == 'sqlite':
+            # Using the split option creates another MetaTransport with
+            # multiple sqlite transports. This guards against very big files
+            # in filesystems that don't support it
+            if 'split' in t_config:
+                dests = []
+                for n in range(t_config['split']):
+                    dests.append({'type': 'sqlite',
+                                  'path': '{}.{}'.format(t_config['path'],
+                                                         n)})
+                return MetaTransport({'redundancy': 1,
+                                      'destination': dests
+                                     }, status)
+
             return SQLiteTransport(t_config['path'], status)
 
         elif t_config['type'] == 's3':
@@ -286,11 +299,15 @@ class SQLiteTransport(Transport):
                 d BLOB
             )
         ''')
+        self.c.execute('''
+            CREATE INDEX IF NOT EXISTS k_index
+            ON forklift_store (k)
+        ''')
         self.db.commit()
         self.status = status
 
     def get_k(self, chunkhash):
-        return b'c' + hexlify(chunkhash)
+        return b'c' + chunkhash
 
     def _store(self, k, d):
         self.c.execute('''
@@ -344,8 +361,7 @@ class SQLiteTransport(Transport):
             SELECT k FROM forklift_store
             WHERE k like 'c%'
         ''')
-        return map(lambda x: unhexlify(x[0][1:]),
-                   self.c.fetchall())
+        return map(lambda x: x[0][1:], self.c.fetchall())
 
     def write_manifest(self, manifest, mid):
         k = 'm.{}'.format(int(mid))
