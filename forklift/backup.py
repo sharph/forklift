@@ -207,7 +207,7 @@ class Backup:
             for count, chunk in enumerate(file_manifest['b']):
                 chunk = b64decode(chunk)
                 if chunk not in chunklist:
-                    chunklist.add(chunk)
+                    chunklist.append(chunk)
                     if (count + 1) * self.config['chunksize'] > \
                             file_manifest['s']:
                         chunklist_sizes.append(file_manifest['s'] %
