@@ -40,12 +40,13 @@ configs = [
 
 infilesdir = os.path.join(os.getcwd(), 'infiles/')
 outfilesdir = os.path.join(os.getcwd(), 'outfiles/')
-files = gen_random_data(infilesdir)
 
 try:
     os.mkdir(infilesdir)
 except OSError:
     pass
+
+files = gen_random_data(infilesdir)
 
 for num, config in enumerate(configs, 1):
     os.mkdir(outfilesdir) # should not exist yet
