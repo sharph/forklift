@@ -1,6 +1,7 @@
 import sys
 from time import time
 
+
 class NullStatus:
     WAITING = 0
     BACKING_UP = 1
@@ -24,18 +25,17 @@ class NullStatus:
         self.text = 'WAITING'
         self.fn = ''
 
-        self.dl_stats = [(time(),0)] # (time(), t_bytes_d)
-        self.ul_stats = [(time(),0)]
-        self.index5s = 0 # index which points to 5 secs ago in stats
+        self.dl_stats = [(time(), 0)]  # (time(), t_bytes_d)
+        self.ul_stats = [(time(), 0)]
+        self.index5s = 0  # index which points to 5 secs ago in stats
 
     def update_speed(self):
         t = time()
         self.dl_stats.append((t, self.t_bytes_d))
         self.ul_stats.append((t, self.t_bytes_u))
         while t - self.dl_stats[self.index5s][0] > 5 \
-            and len(self.dl_stats) - self.index5s > 2:
+                and len(self.dl_stats) - self.index5s > 2:
             self.index5s += 1
-        #    self.ul_stats.pop(0)
 
     def update(self):
         self.update_speed()
@@ -84,14 +84,16 @@ class NullStatus:
         (t, b) = self.dl_stats[self.index5s]
         return self.speed_str(self.t_bytes_d, b, t)
 
+
 class LogStatus(NullStatus):
     pass
+
 
 class ConsoleStatus(NullStatus):
 
     def update(self):
         if self.mode == self.BACKING_UP:
-            spinner = ['[   ]','[>  ]','[>> ]','[>>>]','[ >>]','[  >]']
+            spinner = ['[   ]', '[>  ]', '[>> ]', '[>>>]', '[ >>]', '[  >]']
             spinner = spinner[self.chunks % len(spinner)]
             sys.stdout.write(' ' + spinner + ' ')
             sys.stdout.write('%.2f MB up %s' %
@@ -103,9 +105,9 @@ class ConsoleStatus(NullStatus):
             sys.stdout.write('\r')
             sys.stdout.flush()
         elif self.mode == self.RESTORING:
-            spinner = ['net','Net','NEt','NET','nET','neT']
+            spinner = ['net', 'Net', 'NEt', 'NET', 'nET', 'neT']
             spinner = spinner[self.t_chunks_d % len(spinner)]
-            percentbar = '>' * 80 
+            percentbar = '>' * 80
             if self.bytes == 0:
                 percentbar = '#' * 80
                 percent = 100
@@ -133,7 +135,7 @@ class ConsoleStatus(NullStatus):
             sys.stdout.write('\r')
             sys.stdout.flush()
         elif self.mode == self.WAITING:
-            sys.stdout.write('  %s  |' % (self.text, ) )
+            sys.stdout.write('  %s  |' % (self.text, ))
             sys.stdout.write('\r')
             sys.stdout.flush()
         self.update_speed()
@@ -153,8 +155,6 @@ class ConsoleStatus(NullStatus):
                           self.bytes / 1024.00 / 1024.00))
         sys.stdout.flush()
 
-
     def println(self, text):
         print((' ' * 78) + '\r' + unicode(text))
         self.update()
-    
