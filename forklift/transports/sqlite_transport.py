@@ -79,13 +79,11 @@ class SQLiteTransport(Transport):
 
     def _write_chunk(self, chunkhash, data):
         self._store(self.get_k(chunkhash), data)
-        self.status.t_bytes_u += len(data)
-        self.status.t_chunks_u += 1
+        self.status.inc_t_chunks_u(len(data))
 
     def _read_chunk(self, chunkhash):
         d = self._fetch(self.get_k(chunkhash))
-        self.status.t_bytes_d += len(d)
-        self.status.t_chunks_d += 1
+        self.status.inc_t_chunks_d(len(d))
         return d
 
     def list_chunks(self):
@@ -100,12 +98,12 @@ class SQLiteTransport(Transport):
     def write_manifest(self, manifest, mid):
         k = 'm.{}'.format(int(mid))
         self._store(k, manifest)
-        self.status.t_bytes_u = self.status.t_bytes_u + len(manifest)
+        self.status.inc_t_chunks_u(len(manifest))
 
     def read_manifest(self, mid):
         k = 'm.{}'.format(int(mid))
         d = self._fetch(k)
-        self.status.t_bytes_d = self.status.t_bytes_d + len(d)
+        self.status.inc_t_chunks_d(len(d))
         return d
 
     def write_config(self, settings):
@@ -126,5 +124,6 @@ class SQLiteTransport(Transport):
                 SELECT k FROM forklift_store
                 WHERE k like 'm.%'
             ''')
+            self.status.unwait()
             return sorted(map(lambda x: int(x[0][2:]),
                           c.fetchall()))

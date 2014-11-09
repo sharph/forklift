@@ -32,6 +32,18 @@ class NullStatus:
         self.index5s = 0  # index which points to 5 secs ago in stats
         self.update_lock = RLock()
 
+    def inc_t_chunks_u(self, size):
+        self.update_lock.acquire()
+        self.t_chunks_u += 1
+        self.t_bytes_u += size
+        self.update_lock.release()
+
+    def inc_t_chunks_d(self, size):
+        self.update_lock.acquire()
+        self.t_chunks_u += 1
+        self.t_bytes_u += size
+        self.update_lock.release()
+
     def update_speed(self):
         t = time()
         self.dl_stats.append((t, self.t_bytes_d))

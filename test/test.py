@@ -54,7 +54,7 @@ files = gen_random_data(infilesdir)
 for num, config in enumerate(configs, 1):
     os.mkdir(outfilesdir) # should not exist yet
     os.mkdir('tmp')
-    s = status.NullStatus()
+    s = status.ConsoleStatus()
     s.printverbose = True
     b = backup.Backup(config=config, status=s)
     b.root = infilesdir
