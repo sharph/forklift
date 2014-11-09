@@ -114,6 +114,8 @@ class MetaTransport(Transport):
                 n += 1
             except Fail:
                 pass
+            except NotRedundant:
+                pass
         self.wtransports.append(self.wtransports.pop(0))
         if n == 0:
             if redundancy < self.redundancy:

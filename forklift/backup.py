@@ -12,6 +12,7 @@ from time import time
 import compression
 import crypto
 from transports.metatransport import MetaTransport
+from transports.transport import NotRedundant
 
 from flexceptions import BlockCorruptionError
 
@@ -35,6 +36,7 @@ class Backup:
         self.oldfiles = {}
         self.transport = MetaTransport(config, status)
         self.root = '/'
+        self.force = False
 
     def _syspath_to_backup(self, path):
         return os.path.relpath(path, self.root)
@@ -305,7 +307,7 @@ class Backup:
                          'b': []}
         if rel_path in self.oldfiles and \
             file_manifest['mtime'] == self.oldfiles[rel_path]['mtime'] and \
-                'd' not in self.oldfiles[rel_path]:  # 'd' is dirty
+                'd' not in self.oldfiles[rel_path] and not self.force:
             file_manifest['b'] = self.oldfiles[rel_path]['b']
             file_manifest['s'] = self.oldfiles[rel_path]['s']
             self.status.chunks += len(file_manifest['b'])
@@ -320,7 +322,7 @@ class Backup:
             if chunkdata is not None:
                 try:
                     self.transport.write_chunk(chunkhash, chunkdata)
-                except transports.NotRedundant:  # chunk written to >= 1 dest
+                except NotRedundant:  # chunk written to >= 1 dest
                     file_manifest['d'] = 1  # mark file dirty
             file_manifest['b'].append(b64encode(chunkhash))
             self.status.chunks += 1
