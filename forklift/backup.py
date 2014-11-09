@@ -13,7 +13,7 @@ import compression
 import crypto
 from transports.metatransport import MetaTransport
 
-from flexceptions import *
+from flexceptions import BlockCorruptionError
 
 
 class Backup:
@@ -48,9 +48,6 @@ class Backup:
     def _enc(self, data):
         encrypted = crypto.encrypt(self.config,
                                    compression.compress(self.config, data))
-        if len(data) > 0:
-            self.status.verbose(" compression -> %d%%" % 
-                                (int(float(len(encrypted)) / float(len(data)) * 100), ))
         return encrypted
 
     def _dec(self, data):
@@ -59,13 +56,16 @@ class Backup:
 
     def _save_manifest(self, data):
         data = crypto.encrypt_then_mac(self.config,
-                   compression.compress(self.config, json.dumps(data)))
+                                       compression.compress(self.config,
+                                                            json.dumps(data)))
         self.transport.write_manifest(data, self.inittime)
 
     def _load_manifest(self, mid):
         data = self.transport.read_manifest(mid)
-        return json.loads(compression.decompress(self.config,
-                            crypto.auth_then_decrypt(self.config,data)))
+        return json.loads(
+            compression.decompress(self.config,
+                                   crypto.auth_then_decrypt(self.config,
+                                                            data)))
 
     def _get_chunks(self, f):
         '''Generator that takes a file handle and yields tuples consisting
@@ -99,7 +99,7 @@ class Backup:
         return os.path.join(self.config['local_paths'][0],
                             '.forklift_config')
 
-    def load_config_local(self, path = None):
+    def load_config_local(self, path=None):
         if path is None:
             path = self._local_config_path()
         f = open(path, 'r')
@@ -107,17 +107,17 @@ class Backup:
         f.close()
         self.__init__(config, self.status)
 
-    def save_config_local(self, path = None):
+    def save_config_local(self, path=None):
         if path is None:
             path = self._local_config_path()
         f = open(path, 'w')
         f.write(json.dumps(self.config, indent=2))
-        f.close()   
+        f.close()
 
     def set_passphrase(self, passphrase):
         crypto.new_passphrase(self.config, passphrase)
 
-    def fetch_chunk(self, chunkhash, verifyonly = False):
+    def fetch_chunk(self, chunkhash, verifyonly=False):
         '''Fetches a chunk of the given hash value. First it looks in
         local storage.'''
         if chunkhash in self.blockmap:
@@ -173,7 +173,7 @@ class Backup:
             except OSError:
                 pass
             os.rename(tmppath, path)
-        except BaseException as e:
+        except BaseException:
             self.status.verbose('Cleaning up temporary file!')
             if not f.closed:
                 f.close()
@@ -196,10 +196,7 @@ class Backup:
             return chunklist
         if dupesokay and not return_sizes:
             chunklist = [b64decode(x) for f in manifest['files']
-                            for x in f['b']]
-#            chunklist = map(b64decode, sum(map(lambda x: x['b'],
-#                                               manifest['files']),
-#                                           []))
+                         for x in f['b']]
             return chunklist
         for file_manifest in manifest['files']:
             for count, chunk in enumerate(file_manifest['b']):
@@ -252,12 +249,11 @@ class Backup:
 
         needed_chunks = []
         for chunk in chunklist:
-            if self.fetch_chunk(chunk[0], verifyonly = True) is None:
+            if self.fetch_chunk(chunk[0], verifyonly=True) is None:
                 needed_chunks.append(chunk)
         return needed_chunks
 
-
-    def restore_tree(self, mid = None):
+    def restore_tree(self, mid=None):
         '''Restores the entire file tree for a given manifest id.'''
 
         self.status.mode = self.status.RESTORING
@@ -267,13 +263,13 @@ class Backup:
         else:
             manifest = self._load_manifest(mid)
         self.status.files = len(manifest['files'])
-        self.status.bytes = reduce(lambda x,y: x+y['s'],
+        self.status.bytes = reduce(lambda x, y: x+y['s'],
                                    manifest['files'],
                                    0)
         self.build_block_map(manifest)
         self.transport.prepare_for_restore(
             self.find_needed_chunks(self.get_chunklist(manifest,
-                                                       return_sizes = True)))
+                                                       return_sizes=True)))
         for dir_manifest in manifest['dirs']:
             dirname = dir_manifest['n']
             dirpath = self._backup_to_syspath(dirname)
@@ -286,7 +282,7 @@ class Backup:
                 pass
         for file_manifest in manifest['files']:
             self.restore_file(file_manifest)
-        for dir_manifest in reversed(manifest['dirs']): #permissions
+        for dir_manifest in reversed(manifest['dirs']):  # permissions
             dirname = dir_manifest['n']
             dirpath = self._backup_to_syspath(dirname)
             os.chmod(dirpath, dir_manifest['mode'])
@@ -308,8 +304,8 @@ class Backup:
                          'mtime': int(s.st_mtime),
                          'b': []}
         if rel_path in self.oldfiles and \
-               file_manifest['mtime'] == self.oldfiles[rel_path]['mtime'] and \
-               'd' not in self.oldfiles[rel_path]:  # 'd' is dirty
+            file_manifest['mtime'] == self.oldfiles[rel_path]['mtime'] and \
+                'd' not in self.oldfiles[rel_path]:  # 'd' is dirty
             file_manifest['b'] = self.oldfiles[rel_path]['b']
             file_manifest['s'] = self.oldfiles[rel_path]['s']
             self.status.chunks += len(file_manifest['b'])
@@ -319,7 +315,7 @@ class Backup:
             self.status.filename(None)
             return file_manifest
 
-        f = open(full_path,'rb')
+        f = open(full_path, 'rb')
         for chunkhash, chunkdata in self._get_chunks(f):
             if chunkdata is not None:
                 try:
