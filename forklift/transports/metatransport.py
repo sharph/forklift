@@ -123,7 +123,7 @@ class MetaTransport(Transport):
         while i < len(wtransports) and success < redundancy:
             need = redundancy - success
             end = i + need
-            success += sum(map(write_attempt, wtransports[i:need]))
+            success += sum(self.pool.map(write_attempt, wtransports[i:need]))
             i = end
 
         self.wtransports.append(self.wtransports.pop(0))
