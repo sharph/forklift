@@ -2,40 +2,38 @@
 
 import os
 import os.path
-import sys
-import datetime
 import json
 
 from base64 import b64encode, b64decode
-from binascii import hexlify, unhexlify
+from binascii import hexlify
 
 from time import time
-from getpass import getpass
 
 import compression
 import crypto
-import transports
+from transports.metatransport import MetaTransport
 
 from flexceptions import *
+
 
 class Backup:
     '''A Backup object represents a backup or restore job, with a local
     path and an attached transport. A crypto object can also be attached.
     (If none is selected, we default to NullEncryption().'''
 
-    def __init__(self, config = None, status = None):
+    def __init__(self, config=None, status=None):
         if config is None:
             config = {}
         self.config = config
         if 'chunksize' not in config:
-            self.config['chunksize'] = 1024 * 1024 * 8 # 8MB
+            self.config['chunksize'] = 1024 * 1024 * 8  # 8MB
         crypto.init(config)
         compression.init(config)
         self.status = status
         self.blockmap = {}
         self.inittime = int(time())
         self.oldfiles = {}
-        self.transport = transports.MetaTransport(config, status)
+        self.transport = MetaTransport(config, status)
         self.root = '/'
 
     def _syspath_to_backup(self, path):
@@ -382,4 +380,3 @@ class Backup:
             self.oldfiles = dict(map(lambda x: (x['n'], x),
                                      manifest['files']))
             return manifest
-
