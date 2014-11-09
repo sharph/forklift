@@ -1,6 +1,8 @@
 import sys
 from time import time
 
+from threading import RLock
+
 
 class NullStatus:
     WAITING = 0
@@ -28,6 +30,7 @@ class NullStatus:
         self.dl_stats = [(time(), 0)]  # (time(), t_bytes_d)
         self.ul_stats = [(time(), 0)]
         self.index5s = 0  # index which points to 5 secs ago in stats
+        self.update_lock = RLock()
 
     def update_speed(self):
         t = time()
@@ -38,29 +41,41 @@ class NullStatus:
             self.index5s += 1
 
     def update(self):
+        self.update_lock.acquire()
         self.update_speed()
+        self.update_lock.release()
 
     def wait(self, text):
+        self.update_lock.acquire()
         if self.mode != self.WAITING:
             self.oldmode = self.mode
         self.mode = self.WAITING
         self.text = text
         self.update()
+        self.update_lock.release()
 
     def unwait(self):
+        self.update_lock.acquire()
         self.mode = self.oldmode
         self.text = 'WAITING'
         self.update()
+        self.update_lock.release()
 
     def filename(self, fn):
+        self.update_lock.acquire()
         self.fn = fn
+        self.update_lock.release()
 
     def verbose(self, text):
+        self.update_lock.acquire()
         if self.printverbose:
             self.println(unicode(text))
+        self.update_lock.release()
 
     def println(self, text):
+        self.update_lock.acquire()
         print(unicode(text))
+        self.update_lock.release()
 
     def end(self):
         pass
@@ -92,6 +107,7 @@ class LogStatus(NullStatus):
 class ConsoleStatus(NullStatus):
 
     def update(self):
+        self.update_lock.acquire()
         if self.mode == self.BACKING_UP:
             spinner = ['[   ]', '[>  ]', '[>> ]', '[>>>]', '[ >>]', '[  >]']
             spinner = spinner[self.chunks % len(spinner)]
@@ -139,8 +155,10 @@ class ConsoleStatus(NullStatus):
             sys.stdout.write('\r')
             sys.stdout.flush()
         self.update_speed()
+        self.update_lock.release()
 
     def end(self):
+        self.update_lock.acquire()
         sys.stdout.write(' ' * 78)
         sys.stdout.write('\r')
         sys.stdout.write('Summary:\n')
@@ -154,7 +172,10 @@ class ConsoleStatus(NullStatus):
                           self.files,
                           self.bytes / 1024.00 / 1024.00))
         sys.stdout.flush()
+        self.update_lock.release()
 
     def println(self, text):
+        self.update_lock.acquire()
         print((' ' * 78) + '\r' + unicode(text))
         self.update()
+        self.update_lock.release()
