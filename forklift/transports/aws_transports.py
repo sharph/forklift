@@ -3,11 +3,8 @@ import socket
 import json
 from time import time, sleep
 from binascii import hexlify, unhexlify
-from base64 import b64encode, b64decode
+from base64 import b64encode
 
-from httplib import IncompleteRead
-
-from boto.s3.connection import S3Connection
 from boto.s3.key import Key
 import boto.glacier.exceptions as glacierexceptions
 import boto
@@ -43,16 +40,14 @@ class S3Transport(Transport):
             k.set_contents_from_string(data)
         except socket.gaierror:
             raise TryAgain
-        self.status.t_chunks_u += 1
-        self.status.t_bytes_u += len(data)
+        self.status.inc_t_chunks_u(len(data))
 
     def _read_chunk(self, chunkhash):
         chunkhash = hexlify(chunkhash)
         k = Key(self.b)
         k.key = 'data/' + chunkhash
         data = k.get_contents_as_string()
-        self.status.t_chunks_d += 1
-        self.status.t_bytes_d += len(data)
+        self.status.inc_t_chunks_d(len(data))
         return data
 
     def del_chunk(self, chunkhash):
@@ -74,13 +69,13 @@ class S3Transport(Transport):
         k = self.b.new_key(key)
         data = manifest
         k.set_contents_from_string(data)
-        self.status.t_bytes_u += len(data)
+        self.status.inc_t_chunks_u(len(data))
 
     def read_manifest(self, mid):
         k = Key(self.b)
         k.key = 'manifest.%s' % mid
         data = k.get_contents_as_string()
-        self.status.t_bytes_d += len(data)
+        self.status.inc_t_chunks_d(len(data))
         return data
 
     def del_manifest(self, mid):
@@ -102,14 +97,14 @@ class S3Transport(Transport):
         k = Key(self.b)
         k.key = 'config'
         data = k.get_contents_as_string()
-        self.status.t_bytes_d += len(data)
+        self.status.inc_t_chunks_d(len(data))
         return data
 
     def write_config(self, config):
         key = 'config'
         k = self.b.new_key(key)
         k.set_contents_from_string(config)
-        self.status.t_bytes_u += len(config)
+        self.status.inc_t_chunks_u(len(config))
 
 
 class S3GlacierTransport(S3Transport):
@@ -257,8 +252,7 @@ class S3GlacierTransport(S3Transport):
         except socket.gaierror:
             raise TryAgain
         self._set_aid(chunkhash, writer.get_archive_id())
-        self.status.t_chunks_u += 1
-        self.status.t_bytes_u += len(data)
+        self.status.inc_t_chunks_u(len(data))
 
     def _read_chunk(self, chunkhash):
         aid = self._get_aid(chunkhash)
@@ -273,6 +267,5 @@ class S3GlacierTransport(S3Transport):
             raise TryAgain
         except socket.gaierror:
             raise TryAgain
-        self.status.t_chunks_d += 1
-        self.status.t_bytes_d += len(data)
+        self.status.inc_t_chunks_d(len(data))
         return data

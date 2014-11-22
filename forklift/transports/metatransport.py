@@ -4,6 +4,8 @@ from local_transport import LocalTransport
 from aws_transports import S3Transport, S3GlacierTransport, boto
 from sqlite_transport import SQLiteTransport
 
+from multiprocessing.dummy import Pool as ThreadPool
+
 
 class MetaTransport(Transport):
     '''
@@ -32,6 +34,7 @@ class MetaTransport(Transport):
         for t_config in config['destination']:
             self.transports.append(self._setup_transport(t_config, status))
         self.wtransports = self.transports[:]
+        self.pool = ThreadPool(min([10, self.redundancy]))
 
     def _setup_transport(self, t_config, status):
         '''Given a config, returns a transport object.'''
@@ -51,7 +54,7 @@ class MetaTransport(Transport):
                                                          n)})
                 return MetaTransport({'redundancy': 1,
                                       'destination': dests
-                                     }, status)
+                                      }, status)
 
             return SQLiteTransport(t_config['path'], status)
 
@@ -97,6 +100,15 @@ class MetaTransport(Transport):
         '''
         Writes chunk in enough places to satisfy redundancy requirements.
         '''
+        def write_attempt(transport):
+            try:
+                self._backoff(lambda: transport.write_chunk(chunkhash, data),
+                              Fail)
+            except Fail:
+                return 0
+            except NotRedundant:
+                return 0
+            return 1
 
         wtransports = []
         redundancy = self.redundancy
@@ -105,23 +117,21 @@ class MetaTransport(Transport):
                 redundancy -= 1
             else:
                 wtransports.append(t)
-        n = 0
-        for t in wtransports:
-            if n >= redundancy:
-                break
-            try:
-                self._backoff(lambda: t.write_chunk(chunkhash, data), Fail)
-                n += 1
-            except Fail:
-                pass
-            except NotRedundant:
-                pass
+
+        success = 0
+        i = 0
+        while i < len(wtransports) and success < redundancy:
+            need = redundancy - success
+            end = i + need
+            success += sum(self.pool.map(write_attempt, wtransports[i:need]))
+            i = end
+
         self.wtransports.append(self.wtransports.pop(0))
-        if n == 0:
+        if success == 0:
             if redundancy < self.redundancy:
                 raise NotRedundant
             raise Fail
-        if n < redundancy:
+        if success < redundancy:
             raise NotRedundant
 
     def _read_chunk(self, chunkhash):
@@ -134,12 +144,19 @@ class MetaTransport(Transport):
         appropriately.
         '''
 
+        failed = 0
         for t in self.transports:
-            if t.chunk_exists(chunkhash):
-                try:
+            try:
+                if t.chunk_exists(chunkhash):
                     return t._read_chunk(chunkhash)
-                except TryAgain:
-                    pass
+                else:
+                    failed += 1
+            except TryAgain:
+                pass
+            except Fail:
+                failed += 1
+        if failed == len(self.transports):
+            raise Fail
         raise TryAgain
 
     def del_chunk(self, chunkhash):

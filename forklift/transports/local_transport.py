@@ -36,8 +36,7 @@ class LocalTransport(Transport):
         try:
             f = open(self.tmpblock, 'wb')
             f.write(data)
-            self.status.t_bytes_u += f.tell()
-            self.status.t_chunks_u += 1
+            self.status.inc_t_chunks_u(f.tell())
             f.close()
             os.rename(self.tmpblock, chunkpath)
         except IOError:
@@ -47,8 +46,7 @@ class LocalTransport(Transport):
         chunkdir, chunkpath = self.get_path(chunkhash)
         f = open(chunkpath, 'rb')
         data = f.read()
-        self.status.t_bytes_d += f.tell()
-        self.status.t_chunks_d += 1
+        self.status.inc_t_chunks_d(f.tell())
         f.close()
         return data
 
@@ -73,7 +71,7 @@ class LocalTransport(Transport):
         try:
             f = open(self.tmpblock, 'w')
             f.write(manifest)
-            self.status.t_bytes_u = self.status.t_bytes_u + f.tell()
+            self.status.inc_t_chunks_u(f.tell())
             f.close()
             os.rename(self.tmpblock, path)
         except IOError:
@@ -86,7 +84,7 @@ class LocalTransport(Transport):
         except IOError:
             raise Fail
         manifest = f.read()
-        self.status.t_bytes_d = self.status.t_bytes_d + f.tell()
+        self.status.inc_t_chunks_d(f.tell())
         f.close()
         return manifest
 

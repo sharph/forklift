@@ -34,7 +34,10 @@ configs = [
     },
     {
         'local_paths': [''],
-        'destination': [{'path': 'tmp/fstest', 'type': 'local'}]
+        'redundancy': 2,
+        'destination': [{'path': 'tmp/fstest1', 'type': 'local'},
+                        {'path': 'tmp/fstest2', 'type': 'local'},
+                        {'path': 'tmp/fstest3', 'type': 'local'}]
     }
 ]
 
@@ -51,11 +54,13 @@ files = gen_random_data(infilesdir)
 for num, config in enumerate(configs, 1):
     os.mkdir(outfilesdir) # should not exist yet
     os.mkdir('tmp')
-    s = status.NullStatus()
+    s = status.ConsoleStatus()
     s.printverbose = True
     b = backup.Backup(config=config, status=s)
     b.root = infilesdir
     b.snap_tree()
+    if num == 2:
+        shutil.rmtree('tmp/fstest2')
     b.root = outfilesdir
     b.restore_tree()
     for filename in files:
