@@ -100,6 +100,7 @@ def _config_from_passphrase(passphrase, salt=None):
     new_passphrase(config, passphrase, salt)
     config['aes_key'] = config['passphrase_aes_key']
     config['sha256hmac_key'] = config['passphrase_sha256hmac_key']
+    return config
 
 
 def decrypt_config(data, passphrase):
