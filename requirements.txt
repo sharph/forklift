@@ -1,3 +1,4 @@
 pycrypto
 pbkdf2
 boto
+msgpack-python
