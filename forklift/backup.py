@@ -2,6 +2,7 @@
 
 import os
 import os.path
+import msgpack
 import json
 
 from base64 import b64encode, b64decode
@@ -59,12 +60,12 @@ class Backup:
     def _save_manifest(self, data):
         data = crypto.encrypt_then_mac(self.config,
                                        compression.compress(self.config,
-                                                            json.dumps(data)))
+                                                            msgpack.dumps(data)))
         self.transport.write_manifest(data, self.inittime)
 
     def _load_manifest(self, mid):
         data = self.transport.read_manifest(mid)
-        return json.loads(
+        return msgpack.loads(
             compression.decompress(self.config,
                                    crypto.auth_then_decrypt(self.config,
                                                             data)))
@@ -87,11 +88,11 @@ class Backup:
     def load_config_remote(self, passphrase):
         config = self.transport.read_config()
         config = crypto.decrypt_config(config, passphrase)
-        config = json.loads(config)
+        config = msgpack.loads(config)
         self.__init__(config, self.status)
 
     def save_config_remote(self):
-        config = json.dumps(self.config)
+        config = msgpack.dumps(self.config)
         config = crypto.encrypt_config(self.config, config)
         self.transport.write_config(config)
 
@@ -162,7 +163,7 @@ class Backup:
             f = open(tmppath, 'wb')
             bytes_d = self.status.bytes_d
             for chunk in file_manifest['b']:
-                f.write(self.fetch_chunk(b64decode(chunk)))
+                f.write(self.fetch_chunk(chunk))
                 self.status.chunks_d += 1
                 self.status.bytes_d = bytes_d + f.tell()
                 self.status.update()
@@ -197,12 +198,11 @@ class Backup:
         if 'files' not in manifest:
             return chunklist
         if dupesokay and not return_sizes:
-            chunklist = [b64decode(x) for f in manifest['files']
+            chunklist = [x for f in manifest['files']
                          for x in f['b']]
             return chunklist
         for file_manifest in manifest['files']:
             for count, chunk in enumerate(file_manifest['b']):
-                chunk = b64decode(chunk)
                 if chunk not in chunklist:
                     chunklist.append(chunk)
                     if (count + 1) * self.config['chunksize'] > \
@@ -239,7 +239,6 @@ class Backup:
 
         for f in manifest['files']:
             for pos, chunk in enumerate(f['b']):
-                chunk = b64decode(chunk)
                 if chunk not in self.blockmap:
                     self.blockmap[chunk] = []
                 self.blockmap[chunk].append((pos * self.config['chunksize'],
@@ -324,7 +323,7 @@ class Backup:
                     self.transport.write_chunk(chunkhash, chunkdata)
                 except NotRedundant:  # chunk written to >= 1 dest
                     file_manifest['d'] = 1  # mark file dirty
-            file_manifest['b'].append(b64encode(chunkhash))
+            file_manifest['b'].append(chunkhash)
             self.status.chunks += 1
             self.status.update()
         file_manifest['s'] = f.tell()
