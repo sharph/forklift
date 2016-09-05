@@ -30,10 +30,6 @@ def gen_random_data(path):
 configs = [
     {
         'local_paths': [''],
-        'destination': [{'path': 'tmp/sqlite.test', 'type': 'sqlite'}]
-    },
-    {
-        'local_paths': [''],
         'redundancy': 2,
         'destination': [{'path': 'tmp/fstest1', 'type': 'local'},
                         {'path': 'tmp/fstest2', 'type': 'local'},
@@ -59,8 +55,10 @@ for num, config in enumerate(configs, 1):
     b = backup.Backup(config=config, status=s)
     b.root = infilesdir
     b.snap_tree()
-    if num == 2:
+    if num == 1:
         shutil.rmtree('tmp/fstest2')
+    s = status.ConsoleStatus()
+    b = backup.Backup(config=config, status=s)
     b.root = outfilesdir
     b.restore_tree()
     for filename in files:

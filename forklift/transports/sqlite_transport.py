@@ -1,3 +1,4 @@
+raise Exception("do not use for now")
 
 import os
 import os.path
@@ -39,7 +40,7 @@ class SQLiteTransport(Transport):
             c.execute('''
                 INSERT INTO forklift_store
                 (k, d) VALUES (?, ?)
-            ''', (buffer(k), buffer(d)))
+            ''', (bytes(k), bytes(d)))
         db.commit()
 
     def _fetch(self, k):

@@ -2,7 +2,6 @@
 from transport import Transport, TryAgain, Fail, NotRedundant
 from local_transport import LocalTransport
 from aws_transports import S3Transport, S3GlacierTransport, boto
-from sqlite_transport import SQLiteTransport
 
 from multiprocessing.dummy import Pool as ThreadPool
 
@@ -42,21 +41,21 @@ class MetaTransport(Transport):
         if t_config['type'] == 'local':
             return LocalTransport(t_config['path'], status)
 
-        elif t_config['type'] == 'sqlite':
-            # Using the split option creates another MetaTransport with
-            # multiple sqlite transports. This guards against very big files
-            # in filesystems that don't support it
-            if 'split' in t_config:
-                dests = []
-                for n in range(t_config['split']):
-                    dests.append({'type': 'sqlite',
-                                  'path': '{}.{}'.format(t_config['path'],
-                                                         n)})
-                return MetaTransport({'redundancy': 1,
-                                      'destination': dests
-                                      }, status)
+        #elif t_config['type'] == 'sqlite':
+        #    # Using the split option creates another MetaTransport with
+        #    # multiple sqlite transports. This guards against very big files
+        #    # in filesystems that don't support it
+        #    if 'split' in t_config:
+        #        dests = []
+        #        for n in range(t_config['split']):
+        #            dests.append({'type': 'sqlite',
+        #                          'path': '{}.{}'.format(t_config['path'],
+        #                                                 n)})
+        #        return MetaTransport({'redundancy': 1,
+        #                              'destination': dests
+        #                              }, status)
 
-            return SQLiteTransport(t_config['path'], status)
+        #    return SQLiteTransport(t_config['path'], status)
 
         elif t_config['type'] == 's3':
             s3conn = boto.connect_s3(t_config['aws_access_key_id'],
