@@ -2,29 +2,41 @@
 import flexceptions
 import bz2
 
+COMPRESSORS = {b'off': lambda x: x}
+DECOMPRESSORS = {b'off': lambda x: x}
+
+BEST = b'off'
+
+try:
+    import bz2
+    COMPRESSORS[b'bz2'] = lambda x: bz2.compress(x)
+    DECOMPRESSORS[b'bz2'] = lambda x: bz2.decompress(x)
+    BEST = b'bz2'
+except ImportError:
+    pass
+
+try:
+    import zstd
+    COMPRESSORS[b'zst'] = lambda x: zst.compress(x)
+    DECOMPRESSORS[b'zst'] = lambda x: zst.decompress(x)
+    BEST = b'zst'
+except ImportError:
+    pass
+
 
 def init(config, compression=None):
     if 'compression' not in config:
-        compression = 'bz2'
+        compression = BEST
     if compression is not None:
         config['compression'] = compression
 
-
 def compress(config, data):
-    if config['compression'] == 'bz2':
-        compressed = bz2.compress(data)
-        if len(compressed) < data:
-            return b'bz2' + bz2.compress(data)
-        else:  # bz2'ed random data is larger than not
-            return b'off' + data
-    if config['compression'] == 'off':
-        return b'off' + data
-    raise flexceptions.CompressionError
-
+    compression = bytes(config['compression'])
+    compressed = COMPRESSORS[compression](data)
+    if len(compressed) < len(data):
+        return compression + compressed
+    else:  # bz2'ed random data is larger than not
+        return b'off' + COMPRESSORS[b'off'](data)
 
 def decompress(config, data):
-    if data[:3] == b'bz2':
-        return bz2.decompress(data[3:])
-    if data[:3] == b'off':
-        return data[3:]
-    raise flexceptions.BlockCorruptionError
+    return DECOMPRESSORS[data[:3]](data[3:])
