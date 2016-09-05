@@ -14,8 +14,9 @@ from transport import Transport, Fail, TryAgain
 
 class S3Transport(Transport):
 
-    def __init__(self, bucket, c=None, status=None):
+    def __init__(self, bucket, ia=True, c=None, status=None):
         self.status = status
+        self.ia = ia
         if c is None:
             c = boto.connect_s3()
         self.c = c
@@ -38,6 +39,8 @@ class S3Transport(Transport):
         try:
             k = self.b.new_key('data/' + chunkhash)
             k.set_contents_from_string(data)
+            if self.ia and len(data) > 128 * 1024:
+                k.change_storage_class('STANDARD_IA')
         except socket.gaierror:
             raise TryAgain
         self.status.inc_t_chunks_u(len(data))
@@ -111,6 +114,7 @@ class S3GlacierTransport(S3Transport):
 
     def __init__(self, bucket, vault=None, c=None, gc=None,
                  status=None, retrieve_bph=1491308088):
+        self.ia = False
         if vault is None:
             vault = bucket
         self.retries = 40

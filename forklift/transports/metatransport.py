@@ -60,7 +60,7 @@ class MetaTransport(Transport):
         elif t_config['type'] == 's3':
             s3conn = boto.connect_s3(t_config['aws_access_key_id'],
                                      t_config['aws_secret_access_key'])
-            return S3Transport(t_config['bucket'], s3conn, status)
+            return S3Transport(t_config['bucket'], c=s3conn, status=status)
 
         elif t_config['type'] == 'glacier':
             s3conn = boto.connect_s3(t_config['aws_access_key_id'],
